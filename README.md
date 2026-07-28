@@ -136,11 +136,12 @@ cp config.example.yaml config.yaml
 
 在 `config.yaml` 中指定你的 macOS 主机（支持填写 `~/.ssh/config` 中的别名如 `macbook`，或者直接填写 IP 地址）及同步路径。
 
-### 4. 运行同步
+### 4. 启动应用
 
 ```bash
-python -m duetflow.cli
+uv run python -m duetflow.gui
 ```
+
 
 ---
 

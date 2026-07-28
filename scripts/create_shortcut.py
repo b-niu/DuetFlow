@@ -30,7 +30,7 @@ def create_windows_shortcut(desktop_dir: Path):
     $WshShell = New-Object -comObject WScript.Shell
     $Shortcut = $WshShell.CreateShortcut('{shortcut_path}')
     $Shortcut.TargetPath = 'python.exe'
-    $Shortcut.Arguments = '-m duetflow.cli'
+    $Shortcut.Arguments = '-m duetflow.gui'
     $Shortcut.WorkingDirectory = '{ROOT_DIR}'
     if (Test-Path '{ico_path}') {{
         $Shortcut.IconLocation = '{ico_path}'
@@ -51,7 +51,7 @@ def create_mac_shortcut(desktop_dir: Path):
     script_content = f"""#!/bin/bash
 # DuetFlow macOS 启动快捷方式
 cd "{ROOT_DIR}"
-python3 -m duetflow.cli
+python3 -m duetflow.gui
 """
 
     try:
