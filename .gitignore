@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# DuetFlow local runtime files & configs
+config.yaml
+baseline.json.gz
+.sync_trash/
+
