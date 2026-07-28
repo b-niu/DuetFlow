@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -126,6 +127,34 @@ QPushButton#flat:hover {{
     border-color: #d1d1d6;
 }}
 
+QPushButton#del_host_btn {{
+    background-color: transparent;
+    color: #888888;
+    border: none;
+    font-size: 13px;
+    font-weight: bold;
+    padding: 0px;
+    margin: 0px;
+}}
+QPushButton#del_host_btn:hover {{
+    color: #e53935;
+    background-color: rgba(229, 57, 53, 0.15);
+    border-radius: 4px;
+}}
+
+QSpinBox {{
+    background-color: {CARD_BG};
+    color: {TEXT_PRIMARY};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 6px;
+    padding: 2px 4px;
+    font-size: 13px;
+    font-weight: 500;
+}}
+QSpinBox:hover {{
+    border-color: {ACCENT_BLUE};
+}}
+
 QTableWidget {{
     background-color: {CARD_BG};
     border: 1px solid {BORDER_COLOR};
@@ -211,13 +240,11 @@ ACTION_META = {
 def get_local_ip():
     """获取本机的 LAN IP 地址。"""
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.settimeout(0.5)
-        # 连接一个不需要实际可达的 IP 来确定本地网卡 IP
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
+        from duetflow.config import scan_local_ips
+        scanned = scan_local_ips()
+        if scanned:
+            return scanned[0]["ip"]
+        return "127.0.0.1"
     except Exception:
         return "127.0.0.1"
 
@@ -451,21 +478,32 @@ class MainWindow(QWidget):
         lc_layout.setSpacing(6)
 
         sys_name = "Windows" if sys.platform == "win32" else ("macOS" if sys.platform == "darwin" else "Linux")
-        local_ip = get_local_ip()
 
         lc_title = QLabel(f"💻 本机 ({sys_name})")
-        lc_title.setFont(QFont("", 13, QFont.Bold))
+        font_13_bold = lc_title.font()
+        font_13_bold.setPointSize(13)
+        font_13_bold.setBold(True)
+        lc_title.setFont(font_13_bold)
         lc_title.setStyleSheet(f"color: {TEXT_PRIMARY};")
 
-        self._local_ip_lbl = QLabel(f"IP: {local_ip}")
-        self._local_ip_lbl.setObjectName("subtitle")
+        lc_ip_layout = QHBoxLayout()
+        lc_ip_lbl = QLabel("IP:")
+        lc_ip_lbl.setObjectName("subtitle")
+
+        self._local_ip_combo = QComboBox()
+        self._local_ip_combo.setMinimumWidth(160)
+        self._local_ip_combo.currentIndexChanged.connect(self._on_local_ip_selected)
+
+        lc_ip_layout.addWidget(lc_ip_lbl)
+        lc_ip_layout.addWidget(self._local_ip_combo)
+        lc_ip_layout.addStretch()
 
         self._local_path_lbl = QLabel("本地根路径: 未配置")
         self._local_path_lbl.setObjectName("subtitle")
         self._local_path_lbl.setWordWrap(True)
 
         lc_layout.addWidget(lc_title)
-        lc_layout.addWidget(self._local_ip_lbl)
+        lc_layout.addLayout(lc_ip_layout)
         lc_layout.addWidget(self._local_path_lbl)
         lc_layout.addStretch()
 
@@ -478,17 +516,51 @@ class MainWindow(QWidget):
 
         rc_top = QHBoxLayout()
         rc_title = QLabel("🖥️ 目标设备")
-        rc_title.setFont(QFont("", 13, QFont.Bold))
+        rc_title.setFont(font_13_bold)
         rc_title.setStyleSheet(f"color: {TEXT_PRIMARY};")
 
-        # 下拉选择 Host
+        # 下拉与手动输入组合框
         self._host_combo = QComboBox()
-        self._host_combo.setFixedWidth(140)
-        self._host_combo.currentTextChanged.connect(self._on_host_selected)
+        self._host_combo.setEditable(True)
+        self._host_combo.setMinimumWidth(130)
+        self._host_combo.activated.connect(self._on_host_selected_from_combo)
+        if self._host_combo.lineEdit():
+            self._host_combo.lineEdit().editingFinished.connect(self._on_host_editing_finished)
+
+        # 删除当前 Host 按钮
+        self._del_host_btn = QPushButton("✕")
+        self._del_host_btn.setObjectName("del_host_btn")
+        self._del_host_btn.setFixedSize(22, 22)
+        self._del_host_btn.setToolTip("删除当前选中的 Host 记录")
+        self._del_host_btn.clicked.connect(self._delete_current_host)
+
+        host_layout = QHBoxLayout()
+        host_layout.setContentsMargins(0, 0, 0, 0)
+        host_layout.setSpacing(2)
+        host_layout.addWidget(self._host_combo)
+        host_layout.addWidget(self._del_host_btn)
+
+        # 端口设置控件
+        port_lbl = QLabel("端口:")
+        port_lbl.setObjectName("subtitle")
+        self._port_spin = QSpinBox()
+        self._port_spin.setRange(1, 65535)
+        self._port_spin.setValue(22)
+        self._port_spin.setFixedWidth(60)
+        self._port_spin.editingFinished.connect(self._on_port_editing_finished)
+
+        port_layout = QHBoxLayout()
+        port_layout.setContentsMargins(0, 0, 0, 0)
+        port_layout.setSpacing(4)
+        port_layout.addWidget(port_lbl)
+        port_layout.addWidget(self._port_spin)
 
         # 连通状态指示灯
         self._conn_status_lbl = QLabel("⚪ 未检测")
-        self._conn_status_lbl.setFont(QFont("", 12, QFont.Bold))
+        font_12_bold = self._conn_status_lbl.font()
+        font_12_bold.setPointSize(12)
+        font_12_bold.setBold(True)
+        self._conn_status_lbl.setFont(font_12_bold)
         self._conn_status_lbl.setStyleSheet(f"color: {TEXT_SECONDARY};")
 
         self._test_conn_btn = QPushButton("测试连接")
@@ -497,8 +569,10 @@ class MainWindow(QWidget):
         self._test_conn_btn.clicked.connect(self._test_connection)
 
         rc_top.addWidget(rc_title)
+        rc_top.addSpacing(4)
+        rc_top.addLayout(host_layout)
         rc_top.addSpacing(6)
-        rc_top.addWidget(self._host_combo)
+        rc_top.addLayout(port_layout)
         rc_top.addStretch()
         rc_top.addWidget(self._conn_status_lbl)
         rc_top.addSpacing(6)
@@ -616,11 +690,36 @@ class MainWindow(QWidget):
             r = self._cfg["_resolved"]
             host = self._cfg["ssh"]["host"]
 
-            # 设置 Host 下拉选项
+            # 设置 本机 IP 下拉选项（自动扫描并同步被选选定的 IP）
+            scanned_ips = r.get("scanned_ips", [])
+            selected_ip = r.get("local_ip", "")
+
+            self._local_ip_combo.blockSignals(True)
+            self._local_ip_combo.clear()
+            sel_idx = 0
+            for idx, item in enumerate(scanned_ips):
+                label = item.get("label", item.get("ip"))
+                ip_val = item.get("ip")
+                self._local_ip_combo.addItem(label, ip_val)
+                if ip_val == selected_ip:
+                    sel_idx = idx
+            if self._local_ip_combo.count() > 0:
+                self._local_ip_combo.setCurrentIndex(sel_idx)
+            self._local_ip_combo.blockSignals(False)
+
+            # 设置 Host 下拉选项与端口 SpinBox
+            hosts_list = r.get("hosts_list", [host])
             self._host_combo.blockSignals(True)
             self._host_combo.clear()
-            self._host_combo.addItem(host)
+            for h in hosts_list:
+                if h:
+                    self._host_combo.addItem(h)
+            self._host_combo.setEditText(host)
             self._host_combo.blockSignals(False)
+
+            self._port_spin.blockSignals(True)
+            self._port_spin.setValue(r.get("port", 22))
+            self._port_spin.blockSignals(False)
 
             # 更新双端卡片 UI
             win_root = self._cfg["sync_paths"]["windows_root"]
@@ -633,16 +732,75 @@ class MainWindow(QWidget):
             self._remote_info_lbl.setText(f"SSH: {r['user']}@{r['host']}:{r['port']}")
             self._remote_path_lbl.setText(f"远端根路径: {remote_path}")
 
-            self._append_log("配置文件加载成功。")
-            self._test_connection()  # 自动触发连通性测试
+            self._append_log(f"配置文件加载成功，当前本机 IP: {r['local_ip']}")
         except Exception as e:
             self._set_status(f"配置加载失败: {e}", DANGER_RED)
             self._append_log(f"配置加载错误: {e}")
             self._scan_btn.setEnabled(False)
 
-    def _on_host_selected(self, text):
-        if text and self._cfg:
-            self._test_connection()
+    def _on_local_ip_selected(self, index):
+        if index < 0 or not self._cfg:
+            return
+        new_ip = self._local_ip_combo.itemData(index)
+        current_ip = self._cfg.get("_resolved", {}).get("local_ip")
+        if new_ip and new_ip != current_ip:
+            self._cfg["_resolved"]["local_ip"] = new_ip
+            from duetflow import config as cfg_mod
+            cfg_mod.save_local_ip(new_ip)
+            self._append_log(f"已选择并保存本机 IP 为: {new_ip}")
+
+    def _on_host_selected_from_combo(self, index):
+        if index < 0 or not self._cfg:
+            return
+        host_text = self._host_combo.itemText(index).strip()
+        self._apply_host_change(host_text)
+
+    def _on_host_editing_finished(self):
+        if not self._cfg:
+            return
+        host_text = self._host_combo.currentText().strip()
+        self._apply_host_change(host_text)
+
+    def _apply_host_change(self, host_text):
+        if not host_text or not self._cfg:
+            return
+        curr = self._cfg.get("ssh", {}).get("host")
+        if host_text != curr:
+            self._cfg["ssh"]["host"] = host_text
+            self._cfg["_resolved"]["host"] = host_text
+            from duetflow import config as cfg_mod
+            cfg_mod.save_host(host_text)
+            self._remote_info_lbl.setText(f"SSH: {self._cfg['_resolved']['user']}@{host_text}:{self._cfg['_resolved']['port']}")
+            self._append_log(f"已更新并保存目标 Host 为: {host_text}")
+
+    def _on_port_editing_finished(self):
+        if not self._cfg:
+            return
+        new_port = self._port_spin.value()
+        curr_port = self._cfg.get("ssh", {}).get("port")
+        if new_port != curr_port:
+            self._cfg["ssh"]["port"] = new_port
+            self._cfg["_resolved"]["port"] = new_port
+            from duetflow import config as cfg_mod
+            cfg_mod.save_port(new_port)
+            host_text = self._cfg.get("_resolved", {}).get("host", "")
+            self._remote_info_lbl.setText(f"SSH: {self._cfg['_resolved']['user']}@{host_text}:{new_port}")
+            self._append_log(f"已更新并保存 SSH 端口号为: {new_port}")
+
+    def _delete_current_host(self):
+        if not self._cfg:
+            return
+        curr_text = self._host_combo.currentText().strip()
+        idx = self._host_combo.currentIndex()
+        if curr_text:
+            from duetflow import config as cfg_mod
+            cfg_mod.save_host(curr_text, remove=True)
+            if idx >= 0:
+                self._host_combo.removeItem(idx)
+            self._append_log(f"已删除目标 Host 记录: {curr_text}")
+            new_text = self._host_combo.currentText().strip()
+            if new_text:
+                self._apply_host_change(new_text)
 
     def _open_config(self):
         from duetflow.cli import ROOT as cli_root
@@ -747,7 +905,10 @@ class MainWindow(QWidget):
 
             action_item = QTableWidgetItem(label)
             action_item.setForeground(QColor(color))
-            action_item.setFont(QFont("", 13, QFont.Bold))
+            item_font = action_item.font()
+            item_font.setPointSize(13)
+            item_font.setBold(True)
+            action_item.setFont(item_font)
 
             self._table.setItem(row, 0, action_item)
             self._table.setItem(row, 1, QTableWidgetItem(item["path"]))
