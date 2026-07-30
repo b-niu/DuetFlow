@@ -1,9 +1,9 @@
 # DuetFlow
 
 > **WARNING & DISCLAIMER / 免责声明 / 免責事項**  
-> **English**: This project is a personal hobby tool created by an amateur developer. Please use it with extreme caution and thoroughly inspect the source code to verify its safety before running. The author is not responsible for any file deletion, data loss, system failure, or other issues caused by using this software.  
-> **中文**: 本项目仅为个人兴趣开发的小工具，作者编程水平有限。请务必谨慎使用，并在运行前仔细检查源码安全性。若因使用本软件导致文件删除、数据丢失或系统故障等情况，作者不承担任何责任。  
-> **日本語**: 本プロジェクトは個人が趣味で開発したツールであり、制作者の技術には限界があります。使用の際は十分注意し、実行前にソースコードを確認して安全性を検証してください。本ソフトウェアの使用によりファイル削除、データ損失、障害が発生した場合、作者は一切の責任を負いません。
+> This project is a personal hobby tool created by an amateur developer. Please use it with extreme caution and thoroughly inspect the source code to verify its safety before running. The author is not responsible for any file deletion, data loss, system failure, or other issues caused by using this software.  
+> 本项目仅为个人兴趣开发的小工具，作者编程水平有限。请务必谨慎使用，并在运行前仔细检查源码安全性。若因使用本软件导致文件删除、数据丢失或系统故障等情况，作者不承担任何责任。  
+> 本プロジェクトは個人が趣味で開発したツールであり、制作者の技術には限界があります。使用の際は十分注意し、実行前にソースコードを確認して安全性を検証してください。本ソフトウェアの使用によりファイル削除、データ損失、障害が発生した場合、作者は一切の責任を負いません。
 
 ---
 
