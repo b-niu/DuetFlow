@@ -26,10 +26,14 @@ def create_windows_shortcut(desktop_dir: Path):
     shortcut_path = desktop_dir / "DuetFlow.lnk"
     ico_path = ASSETS_DIR / "icon.ico"
 
+    # 优先使用项目 .venv 中的 Python，确保依赖完整
+    venv_python = ROOT_DIR / ".venv" / "Scripts" / "python.exe"
+    python_exe = str(venv_python) if venv_python.exists() else "python.exe"
+
     ps_script = f"""
     $WshShell = New-Object -comObject WScript.Shell
     $Shortcut = $WshShell.CreateShortcut('{shortcut_path}')
-    $Shortcut.TargetPath = 'python.exe'
+    $Shortcut.TargetPath = '{python_exe}'
     $Shortcut.Arguments = '-m duetflow.gui'
     $Shortcut.WorkingDirectory = '{ROOT_DIR}'
     if (Test-Path '{ico_path}') {{
@@ -41,6 +45,7 @@ def create_windows_shortcut(desktop_dir: Path):
     try:
         subprocess.run(["powershell", "-Command", ps_script], check=True)
         print(f"[Success] 成功在 Windows 桌面创建快捷方式: {shortcut_path}")
+        print(f"[Info]    使用 Python: {python_exe}")
     except Exception as e:
         print(f"[Error] 创建 Windows 快捷方式失败: {e}")
 

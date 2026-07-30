@@ -218,7 +218,14 @@ __marimo__/
 .streamlit/secrets.toml
 
 # DuetFlow local runtime files & configs
+config.json5
 config.yaml
+config.yaml.bak
 baseline.json.gz
+connections.json
+state.json
 .sync_trash/
+
+# CodeBuddy AI project data (memories, automation state, etc.)
+.codebuddy/
 

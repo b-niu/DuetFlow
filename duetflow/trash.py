@@ -27,7 +27,7 @@ def circuit_breaker_check(action_plan, total_files, max_ratio=0.20, max_count=50
         1 for a in action_plan if a["action"] in ("QUARANTINE_WIN", "QUARANTINE_MAC")
     )
     if total_files == 0:
-        return False
+        return False, 0, 0.0
     ratio = quarantine_count / total_files
     if (ratio > max_ratio and quarantine_count > 5) or quarantine_count > max_count:
         return True, quarantine_count, ratio

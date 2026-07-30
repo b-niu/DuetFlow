@@ -172,6 +172,32 @@ def main():
 
     cfg = config.load()
     resolved = cfg["_resolved"]
+
+    # ── 注入 SSH 连接信息（config.load 只产出路径/IP，连接参数存在 connections.json）
+    connections, last_idx = config.load_connections()
+    if not connections:
+        console.print(Panel(
+            "[red]未找到任何连接记录，请先在 GUI 中配置并保存连接，或手动编辑 connections.json。[/]",
+            border_style="red",
+        ))
+        sys.exit(1)
+    conn = connections[last_idx] if last_idx < len(connections) else connections[0]
+    # 密钥为空时自动探测
+    key_path = conn.get("key_path", "")
+    if not key_path:
+        from pathlib import Path as _Path
+        for _name in ("id_rsa", "id_ed25519", "id_ecdsa"):
+            _p = _Path.home() / ".ssh" / _name
+            if _p.exists():
+                key_path = str(_p)
+                break
+    resolved.update({
+        "host": conn.get("host", ""),
+        "port": conn.get("port", 22),
+        "user": conn.get("user", ""),
+        "key_path": key_path,
+    })
+
     win_root = cfg["sync_paths"]["windows_root"]
     mac_root = cfg["sync_paths"]["mac_root"]
     exclude = cfg.get("exclude", [])

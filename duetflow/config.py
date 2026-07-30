@@ -1,14 +1,25 @@
-"""读取 config.yaml，缺失则自动从 config.example.yaml 复制并提示。支持 ~/.ssh/config 别名解析。"""
+"""读取 config.json5，缺失则自动迁移旧 config.yaml 或从 config.example.json5 复制。
 
-import os
+配置体系（文件分工）:
+  - config.json5      — 人类编辑的配置（JSON5 格式，支持注释）
+  - connections.json  — 连接历史（程序自动保存，纯 JSON）
+  - state.json        — 运行时状态（如本机 IP，纯 JSON）
+  - baseline.json.gz  — 同步基线快照（gzip 压缩 JSON，详见 cli.py）
+"""
+
+import json
 import shutil
 from pathlib import Path
 
-import yaml
-
 ROOT = Path(__file__).resolve().parent.parent
-CONFIG_PATH = ROOT / "config.yaml"
-EXAMPLE_PATH = ROOT / "config.example.yaml"
+CONFIG_PATH = ROOT / "config.json5"
+EXAMPLE_PATH = ROOT / "config.example.json5"
+OLD_YAML_PATH = ROOT / "config.yaml"
+STATE_PATH = ROOT / "state.json"
+CONNECTIONS_PATH = ROOT / "connections.json"
+
+
+# ─── 本机 IP 扫描 ─────────────────────────────────────────────────────────────
 
 
 def scan_local_ips():
@@ -37,7 +48,7 @@ def scan_local_ips():
                         interfaces.append({
                             "name": name,
                             "ip": ip_str,
-                            "label": f"{name} ({ip_str})" if name else ip_str
+                            "label": f"{name} ({ip_str})" if name else ip_str,
                         })
     except ImportError:
         pass
@@ -51,7 +62,7 @@ def scan_local_ips():
                 interfaces.append({
                     "name": "网络适配器",
                     "ip": ip_str,
-                    "label": f"网络适配器 ({ip_str})"
+                    "label": f"网络适配器 ({ip_str})",
                 })
     except Exception:
         pass
@@ -73,7 +84,7 @@ def scan_local_ips():
             interfaces.append({
                 "name": "默认网卡",
                 "ip": primary_ip,
-                "label": f"默认网卡 ({primary_ip})"
+                "label": f"默认网卡 ({primary_ip})",
             })
 
     # 排序：主出口 IP 排第 1，普通局域网 IP 排第 2，APIPA (169.254.x.x) 排第 3
@@ -91,89 +102,162 @@ def scan_local_ips():
         interfaces = [{
             "name": "Loopback",
             "ip": "127.0.0.1",
-            "label": "回环地址 (127.0.0.1)"
+            "label": "回环地址 (127.0.0.1)",
         }]
 
     return interfaces
 
 
+# ─── 运行时状态 (state.json) ──────────────────────────────────────────────────
+
+
+def _read_state():
+    """读取 state.json，不存在返回空 dict。"""
+    if not STATE_PATH.exists():
+        return {}
+    try:
+        with open(STATE_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _write_state(data: dict):
+    """写入 state.json。"""
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(STATE_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
 def save_local_ip(ip_address: str):
-    """将选定的本机 IP 保存到 config.yaml。"""
-    if not CONFIG_PATH.exists():
-        return
+    """保存选定的本机 IP 到 state.json。"""
+    state = _read_state()
+    state["local_ip"] = ip_address
+    _write_state(state)
+
+
+# ─── 连接历史 (connections.json) ──────────────────────────────────────────────
+
+
+def load_connections():
+    """读取连接历史。
+    返回: (connections: list[dict], last_index: int)
+    """
+    if not CONNECTIONS_PATH.exists():
+        return [], 0
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-        cfg["local_ip"] = ip_address
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
-    except Exception as e:
-        print(f"[DuetFlow] 保存 local_ip 失败: {e}")
+        with open(CONNECTIONS_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+        connections = data.get("connections", [])
+        if not isinstance(connections, list):
+            connections = []
+        last_index = data.get("last_index", 0)
+        return connections, last_index
+    except Exception:
+        return [], 0
 
 
-def save_host(host_str: str, remove: bool = False):
-    """保存或从历史中删除目标 SSH Host 到 config.yaml。"""
-    if not CONFIG_PATH.exists():
-        return
-    host_str = host_str.strip()
+def save_connections(connections: list, last_index: int = 0):
+    """保存连接历史到 connections.json。"""
+    CONNECTIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-
-        if "ssh" not in cfg:
-            cfg["ssh"] = {}
-
-        history = cfg.get("host_history", [])
-        if not isinstance(history, list):
-            history = []
-
-        if not remove and host_str:
-            if host_str not in history:
-                history.append(host_str)
-            cfg["ssh"]["host"] = host_str
-        elif remove and host_str:
-            if host_str in history:
-                history.remove(host_str)
-            if cfg["ssh"].get("host") == host_str:
-                cfg["ssh"]["host"] = history[0] if history else ""
-
-        cfg["host_history"] = history
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
+        with open(CONNECTIONS_PATH, "w", encoding="utf-8") as f:
+            json.dump(
+                {"connections": connections, "last_index": last_index},
+                f, indent=2, ensure_ascii=False,
+            )
     except Exception as e:
-        print(f"[DuetFlow] 保存 host 失败: {e}")
+        print(f"[DuetFlow] 保存 connections 失败: {e}")
 
 
-def save_port(port_val: int):
-    """保存 SSH 端口号到 config.yaml。"""
-    if not CONFIG_PATH.exists():
-        return
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
-        if "ssh" not in cfg:
-            cfg["ssh"] = {}
-        cfg["ssh"]["port"] = int(port_val)
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
-    except Exception as e:
-        print(f"[DuetFlow] 保存 port 失败: {e}")
+# ─── 主配置加载 ───────────────────────────────────────────────────────────────
+
+
+def _migrate_from_yaml():
+    """将旧 config.yaml 迁移为 config.json5 + connections.json + state.json。"""
+    import yaml
+
+    with open(OLD_YAML_PATH, encoding="utf-8") as f:
+        old = yaml.safe_load(f)
+
+    # 提取 SSH 连接 → connections.json
+    ssh = old.get("ssh", {})
+    host = ssh.get("host", "")
+    port = ssh.get("port", 22)
+    user = ssh.get("user", "")
+    key_path = ssh.get("key_path", "")
+
+    connections = []
+    if host:
+        connections.append({
+            "host": host,
+            "port": port,
+            "user": user,
+            "key_path": key_path,
+        })
+    # 旧 host_history 也转为连接
+    for h in old.get("host_history", []):
+        if h and h != host and not any(c["host"] == h for c in connections):
+            connections.append({"host": h, "port": port, "user": user, "key_path": key_path})
+
+    if connections:
+        save_connections(connections, 0)
+
+    # 写入 config.json5（标准 JSON 即是合法 JSON5，且 json.dump 支持缩进）
+    import json
+    new_cfg = {
+        "sync_paths": old.get("sync_paths", {}),
+        "exclude": old.get("exclude", []),
+        "text_extensions": old.get("text_extensions", []),
+        "safety": old.get("safety", {}),
+        "baseline": old.get("baseline", {}),
+    }
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(new_cfg, f, indent=2)
+
+    # 写入 local_ip → state.json
+    local_ip = old.get("local_ip", "")
+    if local_ip:
+        save_local_ip(local_ip)
+
+    print(f"[DuetFlow] 已从 {OLD_YAML_PATH.name} 迁移到 {CONFIG_PATH.name} + connections.json + state.json")
+
+    # 重命名旧 yaml 以防混淆
+    OLD_YAML_PATH.rename(OLD_YAML_PATH.with_suffix(".yaml.bak"))
 
 
 def load():
+    """加载配置。
+
+    优先级:
+      1. config.json5 (JSON5 格式，支持注释)
+      2. 如不存在，尝试从 config.yaml 迁移
+      3. 如 yaml 也不存在，从 config.example.json5 复制
+
+    返回: dict，含 _resolved 计算字段
+    """
     if not CONFIG_PATH.exists():
-        if EXAMPLE_PATH.exists():
+        if OLD_YAML_PATH.exists():
+            # 一步迁移旧的 yaml 配置
+            _migrate_from_yaml()
+        elif EXAMPLE_PATH.exists():
             shutil.copy(EXAMPLE_PATH, CONFIG_PATH)
-        print(f"[DuetFlow] 配置文件已生成: {CONFIG_PATH}")
-        print("[DuetFlow] 请编辑 config.yaml 后重新运行。")
-        raise SystemExit(0)
+            print(f"[DuetFlow] 配置文件已生成: {CONFIG_PATH}")
+            print("[DuetFlow] 请编辑 config.json5 后重新运行。")
+            raise SystemExit(0)
+        else:
+            print(f"[DuetFlow] 缺少配置，请创建 {CONFIG_PATH}")
+            raise SystemExit(1)
+
+    import pyjson5
 
     with open(CONFIG_PATH, encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+        cfg = pyjson5.load(f)
 
     # 自动扫描本机网卡与 IP
     scanned_ips = scan_local_ips()
-    saved_ip = cfg.get("local_ip")
+    state = _read_state()
+    saved_ip = state.get("local_ip")
     scanned_ip_list = [item["ip"] for item in scanned_ips]
 
     if saved_ip and saved_ip in scanned_ip_list:
@@ -182,52 +266,6 @@ def load():
         active_local_ip = scanned_ips[0]["ip"]
         if saved_ip != active_local_ip:
             save_local_ip(active_local_ip)
-
-    # 解析 ~/.ssh/config 别名及 Host 列表
-    host_str = cfg["ssh"]["host"]
-    ssh_cfg_path = Path.home() / ".ssh" / "config"
-    resolved_host = host_str
-    resolved_port = cfg["ssh"].get("port", 22)
-    resolved_user = cfg["ssh"].get("user", "")
-    resolved_key = cfg["ssh"].get("key_path", None)
-
-    hosts_list = []
-    if host_str:
-        hosts_list.append(host_str)
-
-    for h in cfg.get("host_history", []):
-        if h and h not in hosts_list:
-            hosts_list.append(h)
-
-    if ssh_cfg_path.exists():
-        try:
-            import paramiko
-
-            ssh_config = paramiko.SSHConfig()
-            with open(ssh_cfg_path) as scf:
-                ssh_config.parse(scf)
-
-            for host_name in ssh_config.get_hostnames():
-                if host_name and "*" not in host_name and host_name not in hosts_list:
-                    hosts_list.append(host_name)
-
-            lookup = ssh_config.lookup(host_str)
-            resolved_host = lookup.get("hostname", host_str)
-            resolved_port = int(lookup.get("port", resolved_port))
-            resolved_user = lookup.get("user", resolved_user)
-            id_files = lookup.get("identityfile", [])
-            if id_files and not resolved_key:
-                resolved_key = id_files[0]
-        except Exception:
-            pass
-
-    # 默认密钥
-    if not resolved_key:
-        for name in ("id_rsa", "id_ed25519", "id_ecdsa"):
-            p = Path.home() / ".ssh" / name
-            if p.exists():
-                resolved_key = str(p)
-                break
 
     # 自动识别 local_root 和 remote_root
     import sys
@@ -239,16 +277,10 @@ def load():
     remote_root = mac_root if is_win else win_root
 
     cfg["_resolved"] = {
-        "host": resolved_host,
-        "port": resolved_port,
-        "user": resolved_user,
-        "key_path": resolved_key,
         "local_root": local_root,
         "remote_root": remote_root,
         "is_win": is_win,
         "local_ip": active_local_ip,
         "scanned_ips": scanned_ips,
-        "hosts_list": hosts_list,
     }
     return cfg
-

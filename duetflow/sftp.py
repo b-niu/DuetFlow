@@ -46,7 +46,9 @@ print(json.dumps(result))
 """
     full_script = scanner_src + "\n" + textwrap.dedent(call_code)
 
-    stdin, stdout, stderr = ssh.exec_command(f"python3 -c {_quote(full_script)}")
+    # 兼容 macOS：优先 python3，找不到则回退 python
+    which_line = "PYBIN=$(command -v python3 2>/dev/null || command -v python 2>/dev/null); "
+    stdin, stdout, stderr = ssh.exec_command(which_line + "$PYBIN -c " + _quote(full_script))
     out = stdout.read().decode("utf-8").strip()
     err = stderr.read().decode("utf-8").strip()
     if err:

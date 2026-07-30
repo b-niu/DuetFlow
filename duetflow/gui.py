@@ -15,16 +15,18 @@ from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QSplitter,
+    QTabBar,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -36,145 +38,183 @@ from duetflow import config, merge, scanner, sftp, trash
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# ─── macOS Light 风格调色板 ───────────────────────────────────────────────────
+# ─── 中性浅色调色板 ───────────────────────────────────────────────────────────
 
-LIGHT_BG = "#f5f5f7"          # 系统全局浅灰背景
-CARD_BG = "#ffffff"           # 卡片纯白背景
-BORDER_COLOR = "#e5e5ea"      # 浅灰边框
-TEXT_PRIMARY = "#1d1d1f"      # 核心文字深灰/近黑
-TEXT_SECONDARY = "#86868b"    # 次要说明文字
-ACCENT_BLUE = "#0066cc"       # 苹果蓝
-SUCCESS_GREEN = "#28cd41"     # 活力绿
-WARNING_YELLOW = "#ff9500"    # 警告橙
-DANGER_RED = "#ff3b30"        # 危险红
-TABLE_ALT_BG = "#fafafa"      # 表格交替行颜色
+LIGHT_BG = "#f3f3f3"          # 全局背景
+CARD_BG = "#ffffff"           # 卡片背景
+BORDER_COLOR = "#d0d0d0"      # 边框
+TEXT_PRIMARY = "#222222"      # 主文字
+TEXT_SECONDARY = "#666666"    # 次要文字
+ACCENT_BLUE = "#005a9e"       # 强调蓝
+SUCCESS_GREEN = "#217346"     # 成功绿
+WARNING_YELLOW = "#c78000"    # 警告橙
+DANGER_RED = "#c42b1c"        # 危险红
+TABLE_ALT_BG = "#f7f7f7"      # 表格交替行
+
+MAX_CONNECTIONS = 5
 
 QSS = f"""
 QWidget {{
     background-color: {LIGHT_BG};
     color: {TEXT_PRIMARY};
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-    font-size: 14px;
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
 }}
 
 QFrame#card {{
     background-color: {CARD_BG};
     border: 1px solid {BORDER_COLOR};
-    border-radius: 10px;
+    border-radius: 4px;
 }}
 
-QComboBox {{
+QComboBox, QLineEdit {{
     background-color: {CARD_BG};
     color: {TEXT_PRIMARY};
     border: 1px solid {BORDER_COLOR};
-    border-radius: 6px;
-    padding: 4px 10px;
+    border-radius: 3px;
+    padding: 5px 8px;
     font-size: 13px;
-    font-weight: 500;
 }}
-QComboBox:hover {{
+QComboBox:hover, QLineEdit:hover {{
     border-color: {ACCENT_BLUE};
 }}
 QComboBox::drop-down {{
     border: none;
-    width: 20px;
+    width: 18px;
 }}
 
 QPushButton {{
     background-color: {ACCENT_BLUE};
     color: white;
-    border: none;
-    border-radius: 8px;
-    padding: 8px 18px;
-    font-weight: 600;
-    font-size: 14px;
+    border: 1px solid {ACCENT_BLUE};
+    border-radius: 3px;
+    padding: 6px 14px;
+    font-weight: normal;
+    font-size: 13px;
 }}
 QPushButton:hover {{
-    background-color: #0055b3;
+    background-color: #004a85;
+    border-color: #004a85;
 }}
 QPushButton:pressed {{
-    background-color: #004499;
+    background-color: #003a6a;
 }}
 QPushButton:disabled {{
-    background-color: {BORDER_COLOR};
+    background-color: #e0e0e0;
+    border-color: #d0d0d0;
     color: {TEXT_SECONDARY};
 }}
 
 QPushButton#danger {{
     background-color: {DANGER_RED};
+    border-color: {DANGER_RED};
 }}
 QPushButton#danger:hover {{
-    background-color: #e03228;
+    background-color: #a32012;
 }}
 
 QPushButton#success {{
     background-color: {SUCCESS_GREEN};
+    border-color: {SUCCESS_GREEN};
 }}
 QPushButton#success:hover {{
-    background-color: #22b83a;
+    background-color: #1a5f39;
 }}
 
 QPushButton#flat {{
     background-color: {CARD_BG};
     color: {TEXT_PRIMARY};
     border: 1px solid {BORDER_COLOR};
-    font-weight: 500;
+    font-weight: normal;
     font-size: 13px;
-    padding: 6px 12px;
+    padding: 5px 10px;
 }}
 QPushButton#flat:hover {{
-    background-color: #f0f0f2;
-    border-color: #d1d1d6;
+    background-color: #f0f0f0;
+    border-color: #b0b0b0;
 }}
 
-QPushButton#del_host_btn {{
+QPushButton#add_tab {{
     background-color: transparent;
-    color: #888888;
-    border: none;
-    font-size: 13px;
-    font-weight: bold;
-    padding: 0px;
-    margin: 0px;
+    color: {ACCENT_BLUE};
+    border: 1px solid {BORDER_COLOR};
+    border-radius: 3px;
+    font-size: 14px;
+    font-weight: normal;
+    padding: 2px 10px;
+    min-height: 22px;
 }}
-QPushButton#del_host_btn:hover {{
-    color: #e53935;
-    background-color: rgba(229, 57, 53, 0.15);
-    border-radius: 4px;
+QPushButton#add_tab:hover {{
+    background-color: #f0f0f0;
+    border-color: {ACCENT_BLUE};
 }}
 
-QSpinBox {{
+QPushButton#browse_key {{
     background-color: {CARD_BG};
     color: {TEXT_PRIMARY};
     border: 1px solid {BORDER_COLOR};
-    border-radius: 6px;
-    padding: 2px 4px;
+    border-radius: 3px;
+    font-weight: normal;
     font-size: 13px;
-    font-weight: 500;
+    padding: 5px 10px;
 }}
-QSpinBox:hover {{
-    border-color: {ACCENT_BLUE};
+QPushButton#browse_key:hover {{
+    background-color: #f0f0f0;
+}}
+
+QTabBar {{
+    background: transparent;
+}}
+QTabBar::tab {{
+    background-color: {CARD_BG};
+    color: {TEXT_PRIMARY};
+    border: 1px solid {BORDER_COLOR};
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    padding: 5px 12px;
+    margin-right: 2px;
+    font-size: 13px;
+}}
+QTabBar::tab:selected {{
+    background-color: {CARD_BG};
+    border-bottom: 2px solid {ACCENT_BLUE};
+    color: {ACCENT_BLUE};
+    font-weight: bold;
+}}
+QTabBar::tab:hover:!selected {{
+    background-color: #f0f0f0;
+}}
+QTabBar::close-button {{
+    image: none;
+    subcontrol-position: right;
+    padding: 2px;
+}}
+QTabBar::close-button:hover {{
+    background: rgba(196, 43, 28, 0.12);
+    border-radius: 3px;
 }}
 
 QTableWidget {{
     background-color: {CARD_BG};
     border: 1px solid {BORDER_COLOR};
-    border-radius: 8px;
-    gridline-color: #f0f0f5;
-    selection-background-color: #0066cc1a;
+    border-radius: 4px;
+    gridline-color: #eeeeee;
+    selection-background-color: #d6e8f7;
     selection-color: {TEXT_PRIMARY};
     alternate-background-color: {TABLE_ALT_BG};
-    font-size: 14px;
+    font-size: 13px;
 }}
 QTableWidget::item {{
-    padding: 8px 12px;
+    padding: 6px 10px;
     border: none;
 }}
 QHeaderView::section {{
-    background-color: #ebebeb;
+    background-color: #e8e8e8;
     color: {TEXT_PRIMARY};
-    font-size: 13px;
-    font-weight: 700;
-    padding: 8px 12px;
+    font-size: 12px;
+    font-weight: bold;
+    padding: 6px 10px;
     border: none;
     border-bottom: 1px solid {BORDER_COLOR};
 }}
@@ -182,12 +222,11 @@ QHeaderView::section {{
 QTextEdit {{
     background-color: {CARD_BG};
     border: 1px solid {BORDER_COLOR};
-    border-radius: 8px;
-    padding: 10px;
-    font-family: "SF Mono", "Fira Code", "Consolas", monospace;
-    font-size: 13px;
+    border-radius: 4px;
+    padding: 8px;
+    font-family: Consolas, monospace;
+    font-size: 12px;
     color: {TEXT_PRIMARY};
-    line-height: 1.4;
 }}
 
 QScrollBar:vertical {{
@@ -196,12 +235,12 @@ QScrollBar:vertical {{
     margin: 0;
 }}
 QScrollBar::handle:vertical {{
-    background: #d1d1d6;
+    background: #c0c0c0;
     border-radius: 4px;
     min-height: 30px;
 }}
 QScrollBar::handle:vertical:hover {{
-    background: #a1a1a6;
+    background: #909090;
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 
@@ -211,29 +250,28 @@ QSplitter::handle {{
 }}
 
 QLabel#title {{
-    font-size: 22px;
-    font-weight: 700;
+    font-size: 16px;
+    font-weight: bold;
     color: {TEXT_PRIMARY};
 }}
 QLabel#subtitle {{
-    font-size: 13px;
+    font-size: 12px;
     color: {TEXT_SECONDARY};
 }}
 QLabel#section {{
-    font-size: 13px;
-    font-weight: 700;
+    font-size: 12px;
+    font-weight: bold;
     color: {TEXT_SECONDARY};
-    letter-spacing: 0.5px;
 }}
 """
 
 ACTION_META = {
-    "WIN_TO_MAC":    ("▲ Win → Mac",   ACCENT_BLUE),
-    "MAC_TO_WIN":    ("▼ Mac → Win",   SUCCESS_GREEN),
-    "QUARANTINE_WIN": ("🗑 隔离 Win",   WARNING_YELLOW),
-    "QUARANTINE_MAC": ("🗑 隔离 Mac",   WARNING_YELLOW),
-    "CONFLICT":      ("⚡ 冲突",        DANGER_RED),
-    "SKIP":          ("— 跳过",         TEXT_SECONDARY),
+    "WIN_TO_MAC":    ("Win -> Mac",   ACCENT_BLUE),
+    "MAC_TO_WIN":    ("Mac -> Win",   SUCCESS_GREEN),
+    "QUARANTINE_WIN": ("隔离 Win",    WARNING_YELLOW),
+    "QUARANTINE_MAC": ("隔离 Mac",    WARNING_YELLOW),
+    "CONFLICT":      ("冲突",         DANGER_RED),
+    "SKIP":          ("跳过",         TEXT_SECONDARY),
 }
 
 
@@ -364,7 +402,7 @@ class SyncWorker(QObject):
             for item in plan:
                 action = item["action"]
                 path = item["path"]
-                
+
                 # 转换方向为 [本地 -> 远端] 或 [远端 -> 本地]
                 if is_win:
                     to_remote_action = "WIN_TO_MAC"
@@ -381,22 +419,22 @@ class SyncWorker(QObject):
                 remote_full = str(PurePosixPath(remote_root) / path)
 
                 if action == to_remote_action:
-                    self.log.emit(f"▲ {path}")
+                    self.log.emit(f"上传 {path}")
                     sftp.upload(self._sftp, local_full, remote_full)
                 elif action == to_local_action:
-                    self.log.emit(f"▼ {path}")
+                    self.log.emit(f"下载 {path}")
                     sftp.download(self._sftp, remote_full, local_full)
                 elif action == quarantine_local_action:
-                    self.log.emit(f"🗑 隔离本地: {path}")
+                    self.log.emit(f"隔离本地: {path}")
                     trash.quarantine_local(path, local_root)
                 elif action == quarantine_remote_action:
-                    self.log.emit(f"🗑 隔离远端: {path}")
+                    self.log.emit(f"隔离远端: {path}")
                     remote_trash = str(PurePosixPath(remote_root).parent / ".sync_trash")
                     sftp.remote_quarantine(self._ssh, remote_full, remote_trash)
                 elif action == "CONFLICT":
                     reason = item.get("reason", "")
                     if reason == "modified_vs_deleted":
-                        self.log.emit(f"⚡ 冲突(改/删) 跳过: {path}")
+                        self.log.emit(f"冲突(改/删) 跳过: {path}")
                     else:
                         conflict_name = item["conflict_name"]
                         local_conflict = local_full.parent / Path(conflict_name).name
@@ -406,7 +444,7 @@ class SyncWorker(QObject):
                             self._sftp, remote_full,
                             local_conflict.parent / f"_remote_{Path(conflict_name).name}"
                         )
-                        self.log.emit(f"⚡ 冲突保留: {conflict_name}")
+                        self.log.emit(f"冲突保留: {conflict_name}")
 
             from duetflow.cli import save_baseline
             save_baseline(self._win_manifest, self._mac_manifest)
@@ -433,6 +471,11 @@ class MainWindow(QWidget):
         self._thread = None
         self._worker_obj = None
 
+        # 连接选项卡数据
+        self._connections = []          # list[dict]: {host, port, user, key_path}
+        self._current_idx = -1          # 当前选中的选项卡索引
+        self._tab_updating = False      # 防止信号递归
+
         self._build_ui()
         self._load_config()
 
@@ -443,162 +486,26 @@ class MainWindow(QWidget):
 
         # ── Header ──────────────────────────────────────────────────────────
         header = QHBoxLayout()
-        title = QLabel("🎶 DuetFlow")
+        title = QLabel("DuetFlow")
         title.setObjectName("title")
-        sub = QLabel("双端镜像级文件同步引擎")
-        sub.setObjectName("subtitle")
-        sub.setAlignment(Qt.AlignVCenter)
-
-        self._open_cfg_btn = QPushButton("📝 编辑配置")
-        self._open_cfg_btn.setObjectName("flat")
-        self._open_cfg_btn.clicked.connect(self._open_config)
 
         self._status_label = QLabel("就绪")
         self._status_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-weight: 600;")
         self._status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         header.addWidget(title)
-        header.addSpacing(12)
-        header.addWidget(sub)
         header.addStretch()
-        header.addWidget(self._open_cfg_btn)
-        header.addSpacing(16)
         header.addWidget(self._status_label)
         root.addLayout(header)
 
-        # ── Device Cards (本机与对方设备信息) ─────────────────────────────────
-        devices_layout = QHBoxLayout()
-        devices_layout.setSpacing(16)
+        # ── 连接选项卡栏 ─────────────────────────────────────────────────────
+        self._build_connection_bar(root)
 
-        # 1. 本机设备卡片
-        self._local_card = QFrame()
-        self._local_card.setObjectName("card")
-        lc_layout = QVBoxLayout(self._local_card)
-        lc_layout.setContentsMargins(14, 12, 14, 12)
-        lc_layout.setSpacing(6)
+        # ── 连接设置卡片 ─────────────────────────────────────────────────────
+        self._build_connection_card(root)
 
-        sys_name = "Windows" if sys.platform == "win32" else ("macOS" if sys.platform == "darwin" else "Linux")
-
-        lc_title = QLabel(f"💻 本机 ({sys_name})")
-        font_13_bold = lc_title.font()
-        font_13_bold.setPointSize(13)
-        font_13_bold.setBold(True)
-        lc_title.setFont(font_13_bold)
-        lc_title.setStyleSheet(f"color: {TEXT_PRIMARY};")
-
-        lc_ip_layout = QHBoxLayout()
-        lc_ip_lbl = QLabel("IP:")
-        lc_ip_lbl.setObjectName("subtitle")
-
-        self._local_ip_combo = QComboBox()
-        self._local_ip_combo.setMinimumWidth(160)
-        self._local_ip_combo.currentIndexChanged.connect(self._on_local_ip_selected)
-
-        lc_ip_layout.addWidget(lc_ip_lbl)
-        lc_ip_layout.addWidget(self._local_ip_combo)
-        lc_ip_layout.addStretch()
-
-        self._local_path_lbl = QLabel("本地根路径: 未配置")
-        self._local_path_lbl.setObjectName("subtitle")
-        self._local_path_lbl.setWordWrap(True)
-
-        lc_layout.addWidget(lc_title)
-        lc_layout.addLayout(lc_ip_layout)
-        lc_layout.addWidget(self._local_path_lbl)
-        lc_layout.addStretch()
-
-        # 2. 对方设备卡片
-        self._remote_card = QFrame()
-        self._remote_card.setObjectName("card")
-        rc_layout = QVBoxLayout(self._remote_card)
-        rc_layout.setContentsMargins(14, 12, 14, 12)
-        rc_layout.setSpacing(6)
-
-        rc_top = QHBoxLayout()
-        rc_title = QLabel("🖥️ 目标设备")
-        rc_title.setFont(font_13_bold)
-        rc_title.setStyleSheet(f"color: {TEXT_PRIMARY};")
-
-        # 下拉与手动输入组合框
-        self._host_combo = QComboBox()
-        self._host_combo.setEditable(True)
-        self._host_combo.setMinimumWidth(130)
-        self._host_combo.activated.connect(self._on_host_selected_from_combo)
-        if self._host_combo.lineEdit():
-            self._host_combo.lineEdit().editingFinished.connect(self._on_host_editing_finished)
-
-        # 删除当前 Host 按钮
-        self._del_host_btn = QPushButton("✕")
-        self._del_host_btn.setObjectName("del_host_btn")
-        self._del_host_btn.setFixedSize(22, 22)
-        self._del_host_btn.setToolTip("删除当前选中的 Host 记录")
-        self._del_host_btn.clicked.connect(self._delete_current_host)
-
-        host_layout = QHBoxLayout()
-        host_layout.setContentsMargins(0, 0, 0, 0)
-        host_layout.setSpacing(2)
-        host_layout.addWidget(self._host_combo)
-        host_layout.addWidget(self._del_host_btn)
-
-        # 端口设置控件
-        port_lbl = QLabel("端口:")
-        port_lbl.setObjectName("subtitle")
-        self._port_spin = QSpinBox()
-        self._port_spin.setRange(1, 65535)
-        self._port_spin.setValue(22)
-        self._port_spin.setFixedWidth(60)
-        self._port_spin.editingFinished.connect(self._on_port_editing_finished)
-
-        port_layout = QHBoxLayout()
-        port_layout.setContentsMargins(0, 0, 0, 0)
-        port_layout.setSpacing(4)
-        port_layout.addWidget(port_lbl)
-        port_layout.addWidget(self._port_spin)
-
-        # 连通状态指示灯
-        self._conn_status_lbl = QLabel("⚪ 未检测")
-        font_12_bold = self._conn_status_lbl.font()
-        font_12_bold.setPointSize(12)
-        font_12_bold.setBold(True)
-        self._conn_status_lbl.setFont(font_12_bold)
-        self._conn_status_lbl.setStyleSheet(f"color: {TEXT_SECONDARY};")
-
-        self._test_conn_btn = QPushButton("测试连接")
-        self._test_conn_btn.setObjectName("flat")
-        self._test_conn_btn.setFixedHeight(26)
-        self._test_conn_btn.clicked.connect(self._test_connection)
-
-        rc_top.addWidget(rc_title)
-        rc_top.addSpacing(4)
-        rc_top.addLayout(host_layout)
-        rc_top.addSpacing(6)
-        rc_top.addLayout(port_layout)
-        rc_top.addStretch()
-        rc_top.addWidget(self._conn_status_lbl)
-        rc_top.addSpacing(6)
-        rc_top.addWidget(self._test_conn_btn)
-
-        self._remote_info_lbl = QLabel("SSH: 未加载")
-        self._remote_info_lbl.setObjectName("subtitle")
-
-        self._remote_path_lbl = QLabel("远端根路径: 未配置")
-        self._remote_path_lbl.setObjectName("subtitle")
-        self._remote_path_lbl.setWordWrap(True)
-
-        self._conn_err_detail_lbl = QLabel("")
-        self._conn_err_detail_lbl.setStyleSheet(f"color: {DANGER_RED}; font-size: 12px; font-weight: 500;")
-        self._conn_err_detail_lbl.setWordWrap(True)
-        self._conn_err_detail_lbl.setVisible(False)
-
-        rc_layout.addLayout(rc_top)
-        rc_layout.addWidget(self._remote_info_lbl)
-        rc_layout.addWidget(self._remote_path_lbl)
-        rc_layout.addWidget(self._conn_err_detail_lbl)
-        rc_layout.addStretch()
-
-        devices_layout.addWidget(self._local_card, 1)
-        devices_layout.addWidget(self._remote_card, 1)
-        root.addLayout(devices_layout)
+        # ── 本机 + 远端路径信息 ──────────────────────────────────────────────
+        self._build_path_info(root)
 
         # ── Splitter: table left, log right ─────────────────────────────────
         splitter = QSplitter(Qt.Horizontal)
@@ -652,13 +559,13 @@ class MainWindow(QWidget):
 
         # ── Bottom Action Buttons ───────────────────────────────────────────
         btn_row = QHBoxLayout()
-        self._scan_btn = QPushButton("🔍  扫描并预览变动")
-        self._scan_btn.setFixedHeight(40)
+        self._scan_btn = QPushButton("扫描并预览变动")
+        self._scan_btn.setFixedHeight(32)
         self._scan_btn.clicked.connect(self._start_scan)
 
-        self._exec_btn = QPushButton("✅  确认同步执行")
+        self._exec_btn = QPushButton("确认同步执行")
         self._exec_btn.setObjectName("success")
-        self._exec_btn.setFixedHeight(40)
+        self._exec_btn.setFixedHeight(32)
         self._exec_btn.setEnabled(False)
         self._exec_btn.clicked.connect(self._start_execute)
 
@@ -668,32 +575,315 @@ class MainWindow(QWidget):
         btn_row.addWidget(self._exec_btn)
         root.addLayout(btn_row)
 
+    def _build_connection_bar(self, parent_layout):
+        """构建选项卡栏：QTabBar + "+" 新增按钮。"""
+        bar_row = QHBoxLayout()
+        bar_row.setSpacing(4)
+        bar_row.setContentsMargins(0, 0, 0, 0)
+
+        bar_label = QLabel("连接")
+        bar_label.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {TEXT_SECONDARY}; margin-right: 6px;")
+        bar_row.addWidget(bar_label)
+
+        self._tab_bar = QTabBar()
+        self._tab_bar.setTabsClosable(True)
+        self._tab_bar.setExpanding(False)
+        self._tab_bar.setDrawBase(False)
+        self._tab_bar.currentChanged.connect(self._on_tab_changed)
+        self._tab_bar.tabCloseRequested.connect(self._close_tab)
+        # 自定义关闭按钮文本
+        for i in range(self._tab_bar.count()):
+            tab_btn = self._tab_bar.tabButton(i, QTabBar.RightSide)
+            if tab_btn:
+                tab_btn.setText("✕")
+        bar_row.addWidget(self._tab_bar, 1)
+
+        self._add_tab_btn = QPushButton("+")
+        self._add_tab_btn.setObjectName("add_tab")
+        self._add_tab_btn.setFixedSize(32, 28)
+        self._add_tab_btn.setToolTip("新增连接")
+        self._add_tab_btn.clicked.connect(self._add_new_tab)
+        bar_row.addWidget(self._add_tab_btn)
+
+        parent_layout.addLayout(bar_row)
+
+    def _build_connection_card(self, parent_layout):
+        """构建连接设置输入卡片。"""
+        self._conn_card = QFrame()
+        self._conn_card.setObjectName("card")
+        card_layout = QVBoxLayout(self._conn_card)
+        card_layout.setContentsMargins(16, 12, 16, 12)
+        card_layout.setSpacing(8)
+
+        # ── Row 1: Host + Port + User ──────────────────────────────────────
+        row1 = QHBoxLayout()
+        row1.setSpacing(10)
+
+        row1.addWidget(QLabel("Host:"))
+        self._host_edit = QLineEdit()
+        self._host_edit.setPlaceholderText("e.g. 192.168.1.101")
+        self._host_edit.setMinimumWidth(180)
+        self._host_edit.textChanged.connect(self._on_field_changed)
+        row1.addWidget(self._host_edit)
+
+        row1.addSpacing(6)
+        row1.addWidget(QLabel("Port:"))
+        self._port_edit = QLineEdit()
+        self._port_edit.setPlaceholderText("22")
+        self._port_edit.setFixedWidth(60)
+        self._port_edit.setText("22")
+        self._port_edit.textChanged.connect(self._on_field_changed)
+        row1.addWidget(self._port_edit)
+
+        row1.addSpacing(6)
+        row1.addWidget(QLabel("User:"))
+        self._user_edit = QLineEdit()
+        self._user_edit.setPlaceholderText("username")
+        self._user_edit.setMinimumWidth(120)
+        self._user_edit.textChanged.connect(self._on_field_changed)
+        row1.addWidget(self._user_edit)
+
+        row1.addStretch()
+        card_layout.addLayout(row1)
+
+        # ── Row 2: Key path + Browse ───────────────────────────────────────
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+
+        row2.addWidget(QLabel("Key:"))
+        self._key_edit = QLineEdit()
+        self._key_edit.setPlaceholderText("~/.ssh/id_rsa（留空自动探测）")
+        self._key_edit.textChanged.connect(self._on_field_changed)
+        row2.addWidget(self._key_edit, 1)
+
+        self._browse_key_btn = QPushButton("浏览...")
+        self._browse_key_btn.setObjectName("browse_key")
+        self._browse_key_btn.setFixedHeight(30)
+        self._browse_key_btn.clicked.connect(self._select_key_file)
+        row2.addWidget(self._browse_key_btn)
+
+        card_layout.addLayout(row2)
+
+        # ── Row 3: Test button + status ────────────────────────────────────
+        row3 = QHBoxLayout()
+        row3.setSpacing(12)
+
+        self._test_conn_btn = QPushButton("测试连接")
+        self._test_conn_btn.setObjectName("flat")
+        self._test_conn_btn.setFixedHeight(32)
+        self._test_conn_btn.clicked.connect(self._test_connection)
+        row3.addWidget(self._test_conn_btn)
+
+        self._conn_status_lbl = QLabel("未检测")
+        status_font = self._conn_status_lbl.font()
+        status_font.setPointSize(12)
+        status_font.setBold(True)
+        self._conn_status_lbl.setFont(status_font)
+        self._conn_status_lbl.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        row3.addWidget(self._conn_status_lbl)
+
+        self._conn_err_detail_lbl = QLabel("")
+        self._conn_err_detail_lbl.setStyleSheet(f"color: {DANGER_RED}; font-size: 12px; font-weight: 500;")
+        self._conn_err_detail_lbl.setWordWrap(True)
+        self._conn_err_detail_lbl.setVisible(False)
+        row3.addWidget(self._conn_err_detail_lbl, 1)
+
+        row3.addStretch()
+
+        # 本机 IP 选择（内嵌在行尾）
+        row3.addWidget(QLabel("本机 IP:"))
+        self._local_ip_combo = QComboBox()
+        self._local_ip_combo.setMinimumWidth(140)
+        self._local_ip_combo.currentIndexChanged.connect(self._on_local_ip_selected)
+        row3.addWidget(self._local_ip_combo)
+
+        card_layout.addLayout(row3)
+
+        parent_layout.addWidget(self._conn_card)
+
+    def _build_path_info(self, parent_layout):
+        """构建路径信息行。"""
+        path_row = QHBoxLayout()
+        path_row.setSpacing(24)
+
+        self._local_path_lbl = QLabel("本地根路径: 未配置")
+        self._local_path_lbl.setObjectName("subtitle")
+        path_row.addWidget(self._local_path_lbl)
+
+        self._remote_path_lbl = QLabel("远端根路径: 未配置")
+        self._remote_path_lbl.setObjectName("subtitle")
+        path_row.addWidget(self._remote_path_lbl)
+
+        path_row.addStretch()
+        parent_layout.addLayout(path_row)
+
+    # ── 连接选项卡管理 ──────────────────────────────────────────────────────
+
+    def _on_tab_changed(self, index):
+        """切换选项卡 → 将对应连接的参数填入输入框。"""
+        if self._tab_updating:
+            return
+        if index < 0 or index >= len(self._connections):
+            return
+
+        self._current_idx = index
+        conn = self._connections[index]
+        self._fill_fields_from_conn(conn)
+        self._update_resolved_from_fields()
+
+    def _fill_fields_from_conn(self, conn):
+        """将连接数据填入输入框（不触发保存回写）。"""
+        self._tab_updating = True
+        self._host_edit.setText(conn.get("host", ""))
+        self._port_edit.setText(str(conn.get("port", 22)))
+        self._user_edit.setText(conn.get("user", ""))
+        self._key_edit.setText(conn.get("key_path", ""))
+        # 重置连接状态
+        self._conn_status_lbl.setText("未检测")
+        self._conn_status_lbl.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        self._conn_err_detail_lbl.setVisible(False)
+        self._tab_updating = False
+
+    def _on_field_changed(self):
+        """输入字段变更时，实时同步到当前选项卡数据。"""
+        if self._tab_updating:
+            return
+        if self._current_idx < 0 or self._current_idx >= len(self._connections):
+            return
+        conn = self._connections[self._current_idx]
+        conn["host"] = self._host_edit.text().strip()
+        conn["port"] = self._port_number()
+        conn["user"] = self._user_edit.text().strip()
+        conn["key_path"] = self._key_edit.text().strip()
+        # 更新选项卡标签
+        label = conn["host"] or "新连接"
+        self._tab_bar.setTabText(self._current_idx, label)
+        # 重置连接状态
+        self._conn_status_lbl.setText("未检测")
+        self._conn_status_lbl.setStyleSheet(f"color: {TEXT_SECONDARY};")
+        self._conn_err_detail_lbl.setVisible(False)
+
+    def _add_new_tab(self):
+        """新增一个空白连接选项卡。"""
+        if len(self._connections) >= MAX_CONNECTIONS:
+            QMessageBox.information(self, "提示", f"最多保留 {MAX_CONNECTIONS} 个连接记录")
+            return
+
+        new_conn = {"host": "", "port": 22, "user": "", "key_path": ""}
+        self._connections.append(new_conn)
+
+        self._tab_updating = True
+        idx = self._tab_bar.addTab("新连接")
+        self._tab_updating = False
+
+        self._tab_bar.setCurrentIndex(idx)
+        self._current_idx = idx
+        self._fill_fields_from_conn(new_conn)
+
+        # 聚焦到 Host 输入框
+        self._host_edit.setFocus()
+        self._host_edit.selectAll()
+
+        self._save_connections_to_disk()
+
+    def _close_tab(self, index):
+        """关闭指定选项卡。"""
+        if len(self._connections) <= 1:
+            QMessageBox.information(self, "提示", "至少保留一个连接")
+            return
+        if index < 0 or index >= len(self._connections):
+            return
+
+        # 移除数据
+        self._connections.pop(index)
+        self._tab_updating = True
+        self._tab_bar.removeTab(index)
+        self._tab_updating = False
+
+        # 切换选中
+        new_count = self._tab_bar.count()
+        if new_count > 0:
+            new_idx = min(index, new_count - 1)
+            self._tab_bar.setCurrentIndex(new_idx)
+        else:
+            self._current_idx = -1
+
+        self._save_connections_to_disk()
+
+    def _select_key_file(self):
+        """浏览选择密钥文件。"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择 SSH 私钥", str(Path.home() / ".ssh"),
+            "所有文件 (*);;私钥文件 (*.pem;*.key)"
+        )
+        if path:
+            self._key_edit.setText(path)
+
+    def _save_connections_to_disk(self):
+        """将当前连接列表持久化到 connections.json。"""
+        from duetflow.config import save_connections
+        save_connections(self._connections, self._tab_bar.currentIndex())
+
+    # ── 构建运行时配置 ──────────────────────────────────────────────────────
+
+    def _port_number(self):
+        """从端口输入框解析整数，非法或空时回退到 22。"""
+        text = self._port_edit.text().strip()
+        try:
+            port = int(text)
+            if 1 <= port <= 65535:
+                return port
+        except ValueError:
+            pass
+        return 22
+
+    def _update_resolved_from_fields(self):
+        """从当前输入字段 + self._cfg 的静态配置，构建 _resolved。"""
+        if not self._cfg:
+            return
+
+        host = self._host_edit.text().strip()
+        port = self._port_number()
+        user = self._user_edit.text().strip()
+        key_path = self._key_edit.text().strip()
+
+        # 如果密钥为空，自动探测
+        if not key_path:
+            for name in ("id_rsa", "id_ed25519", "id_ecdsa"):
+                p = Path.home() / ".ssh" / name
+                if p.exists():
+                    key_path = str(p)
+                    break
+
+        r = self._cfg["_resolved"]
+        r["host"] = host
+        r["port"] = port
+        r["user"] = user
+        r["key_path"] = key_path
+
+        local_ip = self._local_ip_combo.itemData(self._local_ip_combo.currentIndex()) or ""
+        r["local_ip"] = local_ip
+
     # ── Config ───────────────────────────────────────────────────────────────
 
     def _load_config(self):
         from duetflow import config as cfg_mod
-        from duetflow.cli import ROOT as cli_root
-        config_path = cli_root / "config.yaml"
-        example_path = cli_root / "config.example.yaml"
 
-        if not config_path.exists():
-            if example_path.exists():
-                import shutil
-                shutil.copy(example_path, config_path)
-            self._set_status(f"配置文件已生成: {config_path.name}", DANGER_RED)
-            self._append_log(f"配置文件已自动生成，请编辑后重新运行: {config_path}")
+        # config.load() 内部自动处理：从 example 复制 / 从旧 config.yaml 迁移
+        try:
+            self._cfg = cfg_mod.load()
+        except SystemExit:
+            self._set_status("配置文件已生成，请编辑 config.json5 后重启", DANGER_RED)
+            self._append_log("首次运行：config.json5 已自动生成，请编辑后重新启动程序")
             self._scan_btn.setEnabled(False)
             return
 
         try:
-            self._cfg = cfg_mod.load()
             r = self._cfg["_resolved"]
-            host = self._cfg["ssh"]["host"]
 
-            # 设置 本机 IP 下拉选项（自动扫描并同步被选选定的 IP）
+            # 设置本机 IP 下拉
             scanned_ips = r.get("scanned_ips", [])
             selected_ip = r.get("local_ip", "")
-
             self._local_ip_combo.blockSignals(True)
             self._local_ip_combo.clear()
             sel_idx = 0
@@ -707,32 +897,48 @@ class MainWindow(QWidget):
                 self._local_ip_combo.setCurrentIndex(sel_idx)
             self._local_ip_combo.blockSignals(False)
 
-            # 设置 Host 下拉选项与端口 SpinBox
-            hosts_list = r.get("hosts_list", [host])
-            self._host_combo.blockSignals(True)
-            self._host_combo.clear()
-            for h in hosts_list:
-                if h:
-                    self._host_combo.addItem(h)
-            self._host_combo.setEditText(host)
-            self._host_combo.blockSignals(False)
-
-            self._port_spin.blockSignals(True)
-            self._port_spin.setValue(r.get("port", 22))
-            self._port_spin.blockSignals(False)
-
-            # 更新双端卡片 UI
+            # 更新路径信息
             win_root = self._cfg["sync_paths"]["windows_root"]
             mac_root = self._cfg["sync_paths"]["mac_root"]
             is_win = sys.platform == "win32"
             local_path = win_root if is_win else mac_root
             remote_path = mac_root if is_win else win_root
-
             self._local_path_lbl.setText(f"本地根路径: {local_path}")
-            self._remote_info_lbl.setText(f"SSH: {r['user']}@{r['host']}:{r['port']}")
             self._remote_path_lbl.setText(f"远端根路径: {remote_path}")
 
+            # 加载连接历史
+            connections, last_idx = cfg_mod.load_connections()
+
+            # 如果没有历史连接，从旧配置创建一个
+            if not connections:
+                old_host = self._cfg.get("ssh", {}).get("host", "")
+                old_user = self._cfg.get("ssh", {}).get("user", "")
+                old_port = self._cfg.get("ssh", {}).get("port", 22)
+                old_key = r.get("key_path", "")
+                if old_host:
+                    connections = [{"host": old_host, "port": old_port, "user": old_user, "key_path": old_key}]
+                    cfg_mod.save_connections(connections, 0)
+
+            self._connections = connections
+
+            # 填充选项卡
+            self._tab_updating = True
+            self._tab_bar.clear()
+            for conn in connections:
+                label = conn.get("host", "") or "新连接"
+                self._tab_bar.addTab(label)
+            self._tab_updating = False
+
+            # 选中上次使用的选项卡
+            if connections:
+                safe_idx = max(0, min(last_idx, len(connections) - 1))
+                self._tab_bar.setCurrentIndex(safe_idx)
+                self._current_idx = safe_idx
+                self._fill_fields_from_conn(connections[safe_idx])
+
+            self._update_resolved_from_fields()
             self._append_log(f"配置文件加载成功，当前本机 IP: {r['local_ip']}")
+            self._append_log(f"已加载 {len(connections)} 个连接记录")
         except Exception as e:
             self._set_status(f"配置加载失败: {e}", DANGER_RED)
             self._append_log(f"配置加载错误: {e}")
@@ -749,80 +955,26 @@ class MainWindow(QWidget):
             cfg_mod.save_local_ip(new_ip)
             self._append_log(f"已选择并保存本机 IP 为: {new_ip}")
 
-    def _on_host_selected_from_combo(self, index):
-        if index < 0 or not self._cfg:
-            return
-        host_text = self._host_combo.itemText(index).strip()
-        self._apply_host_change(host_text)
-
-    def _on_host_editing_finished(self):
-        if not self._cfg:
-            return
-        host_text = self._host_combo.currentText().strip()
-        self._apply_host_change(host_text)
-
-    def _apply_host_change(self, host_text):
-        if not host_text or not self._cfg:
-            return
-        curr = self._cfg.get("ssh", {}).get("host")
-        if host_text != curr:
-            self._cfg["ssh"]["host"] = host_text
-            self._cfg["_resolved"]["host"] = host_text
-            from duetflow import config as cfg_mod
-            cfg_mod.save_host(host_text)
-            self._remote_info_lbl.setText(f"SSH: {self._cfg['_resolved']['user']}@{host_text}:{self._cfg['_resolved']['port']}")
-            self._append_log(f"已更新并保存目标 Host 为: {host_text}")
-
-    def _on_port_editing_finished(self):
-        if not self._cfg:
-            return
-        new_port = self._port_spin.value()
-        curr_port = self._cfg.get("ssh", {}).get("port")
-        if new_port != curr_port:
-            self._cfg["ssh"]["port"] = new_port
-            self._cfg["_resolved"]["port"] = new_port
-            from duetflow import config as cfg_mod
-            cfg_mod.save_port(new_port)
-            host_text = self._cfg.get("_resolved", {}).get("host", "")
-            self._remote_info_lbl.setText(f"SSH: {self._cfg['_resolved']['user']}@{host_text}:{new_port}")
-            self._append_log(f"已更新并保存 SSH 端口号为: {new_port}")
-
-    def _delete_current_host(self):
-        if not self._cfg:
-            return
-        curr_text = self._host_combo.currentText().strip()
-        idx = self._host_combo.currentIndex()
-        if curr_text:
-            from duetflow import config as cfg_mod
-            cfg_mod.save_host(curr_text, remove=True)
-            if idx >= 0:
-                self._host_combo.removeItem(idx)
-            self._append_log(f"已删除目标 Host 记录: {curr_text}")
-            new_text = self._host_combo.currentText().strip()
-            if new_text:
-                self._apply_host_change(new_text)
-
-    def _open_config(self):
-        from duetflow.cli import ROOT as cli_root
-        import os, subprocess
-        config_path = str(cli_root / "config.yaml")
-        if sys.platform == "win32":
-            os.startfile(config_path)
-        elif sys.platform == "darwin":
-            subprocess.run(["open", config_path])
-        else:
-            subprocess.run(["xdg-open", config_path])
-
     # ── Connection Test ──────────────────────────────────────────────────────
 
     def _test_connection(self):
         if not self._cfg:
             return
-        self._conn_status_lbl.setText("🟡 检测中...")
+        self._update_resolved_from_fields()
+        r = self._cfg["_resolved"]
+
+        if not r.get("host"):
+            QMessageBox.warning(self, "提示", "请先输入目标主机地址")
+            return
+        if not r.get("user"):
+            QMessageBox.warning(self, "提示", "请先输入用户名")
+            return
+
+        self._conn_status_lbl.setText("检测中...")
         self._conn_status_lbl.setStyleSheet(f"color: {WARNING_YELLOW}; font-weight: bold;")
         self._test_conn_btn.setEnabled(False)
+        self._conn_err_detail_lbl.setVisible(False)
 
-        r = self._cfg["_resolved"]
         self._conn_tester = ConnectionTester(r)
         self._conn_thread = QThread()
         self._conn_tester.moveToThread(self._conn_thread)
@@ -839,14 +991,27 @@ class MainWindow(QWidget):
 
         self._test_conn_btn.setEnabled(True)
         if ok:
-            self._conn_status_lbl.setText(f"🟢 在线 ({int(rtt)}ms)")
+            self._conn_status_lbl.setText(f"在线 ({int(rtt)}ms)")
             self._conn_status_lbl.setStyleSheet(f"color: {SUCCESS_GREEN}; font-weight: bold;")
             self._conn_err_detail_lbl.setVisible(False)
             self._append_log(f"网络探针: 成功连接至远端主机 ({int(rtt)}ms)")
+
+            # 连接成功 → 确保当前连接的参数已保存到选项卡
+            if self._current_idx >= 0 and self._current_idx < len(self._connections):
+                conn = self._connections[self._current_idx]
+                host = self._host_edit.text().strip()
+                # 如果是空白连接（新建的），自动填入
+                if not conn.get("host"):
+                    conn["host"] = host
+                    conn["port"] = self._port_number()
+                    conn["user"] = self._user_edit.text().strip()
+                    conn["key_path"] = self._key_edit.text().strip()
+                    self._tab_bar.setTabText(self._current_idx, host or "新连接")
+                self._save_connections_to_disk()
         else:
-            self._conn_status_lbl.setText("🔴 无法连接")
+            self._conn_status_lbl.setText("无法连接")
             self._conn_status_lbl.setStyleSheet(f"color: {DANGER_RED}; font-weight: bold;")
-            self._conn_err_detail_lbl.setText(f"⚠️ {msg}")
+            self._conn_err_detail_lbl.setText(f"{msg}")
             self._conn_err_detail_lbl.setToolTip(msg)
             self._conn_err_detail_lbl.setVisible(True)
             self._append_log(f"网络探针: 连接异常 - {msg}")
@@ -856,6 +1021,7 @@ class MainWindow(QWidget):
     def _start_scan(self):
         if not self._cfg:
             return
+        self._update_resolved_from_fields()
         self._set_busy(True)
         self._table.setRowCount(0)
         self._plan = None
@@ -962,7 +1128,7 @@ class MainWindow(QWidget):
 
     def _set_busy(self, busy):
         self._scan_btn.setEnabled(not busy)
-        self._scan_btn.setText("正在扫描计算中..." if busy else "🔍  扫描并预览变动")
+        self._scan_btn.setText("正在扫描计算中..." if busy else "扫描并预览变动")
 
 
 # ─── 入口 ─────────────────────────────────────────────────────────────────────
