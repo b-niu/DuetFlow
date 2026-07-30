@@ -226,6 +226,24 @@ def _migrate_from_yaml():
     OLD_YAML_PATH.rename(OLD_YAML_PATH.with_suffix(".yaml.bak"))
 
 
+def save_sync_paths(win_root: str, mac_root: str):
+    """保存同步路径到 config.json5。"""
+    import pyjson5
+    if not CONFIG_PATH.exists():
+        return
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            cfg = pyjson5.load(f)
+        cfg.setdefault("sync_paths", {})
+        cfg["sync_paths"]["windows_root"] = win_root
+        cfg["sync_paths"]["mac_root"] = mac_root
+        import json
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"[DuetFlow] 保存 sync_paths 失败: {e}")
+
+
 def load():
     """加载配置。
 

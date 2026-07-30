@@ -38,6 +38,17 @@
 
 DuetFlow is a specialized file synchronization engine designed for seamless work folder sync between **Windows (Primary Desk)** and **macOS (Laptop)**.
 
+### 🏗️ Architecture & Requirements
+
+Do I need to install or run DuetFlow on macOS?  
+**No! macOS does NOT need to run or install DuetFlow.**
+
+- **Single-Controller Architecture**: Windows acts as the central controller running the GUI/CLI and three-way merge engine.
+- **macOS Requirements**: Simply enable **Remote Login (SSH)** on macOS (`System Settings -> Sharing -> Remote Login`).
+- **Initiating Synchronization**:
+  - **Mode A (Recommended - Zero Config on Windows)**: Run the DuetFlow GUI on Windows. It connects to macOS via SSH/SFTP to perform the sync.
+  - **Mode B (Remote Triggering from macOS)**: Enable OpenSSH Server on Windows. You can then trigger the sync from your macOS terminal via `ssh windows_ip "uv run python -m duetflow.cli"`.
+
 ### 🛡️ Safety & Precautions
 
 > [!WARNING]
@@ -68,13 +79,24 @@ uv run python -m duetflow.cli
 uv run pytest
 ```
 
-On initial launch, `config.json5` will be created automatically from `config.example.json5`. Configure your local and remote root paths inside `config.json5`.
+On initial launch, `config.json5` will be created automatically from `config.example.json5`. Configure your local and remote root paths inside `config.json5` or directly within the GUI.
 
 ---
 
 ## 🇨🇳 中文
 
 DuetFlow 是专门设计用于 **Windows 工作站** 与 **macOS 笔记本** 之间的双端文件同步引擎。
+
+### 🏗️ 系统架构与环境准备
+
+Mac 端是否需要运行或安装本软件？  
+**不需要！Mac 端完全不需要运行、甚至不需要安装本软件。**
+
+- **单主控架构设计**：Windows 端作为指挥官与计算大脑，运行 GUI/CLI 界面与三路合并引擎。
+- **Mac 端环境要求**：只需在 macOS 中开启系统自带的 **远程登录 (SSH)** 即可（`系统设置 -> 共享 -> 勾选 远程登录`）。
+- **发起同步的两种模式**：
+  - **模式 A（推荐 · 零配置）**：直接在 Windows 端运行 DuetFlow 图形界面，输入 Mac 的 IP 与账号密码/密钥即可发起同步。Windows 无需开启任何 SSH 服务。
+  - **模式 B（从 Mac 远程触发）**：若希望坐在 Mac 前直接发起同步，只需在 Windows 端开启内置的 OpenSSH Server 选配组件，即可在 Mac 终端通过 `ssh windows_ip "uv run python -m duetflow.cli"` 远程触发台式机执行同步。
 
 ### 🛡️ 建议与防范提醒
 
@@ -106,13 +128,24 @@ uv run python -m duetflow.cli
 uv run pytest
 ```
 
-首次运行会自动从 `config.example.json5` 生成 `config.json5`，只需编辑其中的同步路径即可使用。
+首次运行会自动从 `config.example.json5` 生成 `config.json5`，亦可直接在 GUI 界面中选择和配置本地/远端同步路径。
 
 ---
 
 ## 🇯🇵 日本語
 
 DuetFlow は **Windows (デスクトップ)** と **macOS (ノートPC)** の間で動作するファイル同期エンジンです。
+
+### 🏗️ システム構成と事前準備
+
+macOS 側に DuetFlow をインストールまたは実行する必要がありますか？  
+**いいえ！macOS 側でアプリを実行またはインストールする必要は一切ありません。**
+
+- **シングルコントローラー構成**: Windows 側が中央コントローラーとして GUI/CLI および 3 ウェイマージエンジンを実行します。
+- **macOS 側の必要条件**: macOS の**リモートログイン (SSH)** を有効にするだけです（`システム設定 -> 共有 -> リモートログイン`）。
+- **同期の実行モード**:
+  - **モード A（推奨・Windows側設定不要）**: Windows 側の GUI アプリを起動し、Mac に接続して同期を実行します。
+  - **モード B（Mac 側からのリモート実行）**: Windows 側で OpenSSH Server を有効にすると、Mac のターミナルから `ssh windows_ip "uv run python -m duetflow.cli"` を実行して遠隔同期できます。
 
 ### 🛡️ 推奨事項および安全対策
 
@@ -144,7 +177,7 @@ uv run python -m duetflow.cli
 uv run pytest
 ```
 
-初回起動時に `config.example.json5` から `config.json5` が自動生成されます。`config.json5` に同期パスを設定してください。
+初回起動時に `config.example.json5` から `config.json5` が自動生成されます。GUI 上でパスを直接設定することも可能です。
 
 ---
 

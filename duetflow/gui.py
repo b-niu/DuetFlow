@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -38,18 +39,21 @@ from duetflow import config, merge, scanner, sftp, trash
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# ─── 中性浅色调色板 ───────────────────────────────────────────────────────────
+# ─── 现代优雅调色板 ───────────────────────────────────────────────────────────
 
-LIGHT_BG = "#f3f3f3"          # 全局背景
-CARD_BG = "#ffffff"           # 卡片背景
-BORDER_COLOR = "#d0d0d0"      # 边框
-TEXT_PRIMARY = "#222222"      # 主文字
-TEXT_SECONDARY = "#666666"    # 次要文字
-ACCENT_BLUE = "#005a9e"       # 强调蓝
-SUCCESS_GREEN = "#217346"     # 成功绿
-WARNING_YELLOW = "#c78000"    # 警告橙
-DANGER_RED = "#c42b1c"        # 危险红
-TABLE_ALT_BG = "#f7f7f7"      # 表格交替行
+LIGHT_BG = "#f8fafc"          # 全局清爽背景 (Slate 50)
+CARD_BG = "#ffffff"           # 卡片背景 (纯白)
+BORDER_COLOR = "#e2e8f0"      # 微边框 (Slate 200)
+TEXT_PRIMARY = "#0f172a"      # 主文字 (Slate 900)
+TEXT_SECONDARY = "#64748b"    # 次要文字 (Slate 500)
+ACCENT_BLUE = "#2563eb"       # 品牌海蓝 (Blue 600)
+SUCCESS_GREEN = "#16a34a"     # 成功绿 (Green 600)
+WARNING_YELLOW = "#d97706"    # 警告橙 (Amber 600)
+DANGER_RED = "#dc2626"        # 危险红 (Red 600)
+TABLE_ALT_BG = "#f8fafc"      # 表格交替行
+
+CONSOLE_BG = "#0f172a"        # 暗黑控制台背景 (Slate 900)
+CONSOLE_TEXT = "#38bdf8"      # 暗黑控制台青蓝文本 (Sky 400)
 
 MAX_CONNECTIONS = 5
 
@@ -57,95 +61,111 @@ QSS = f"""
 QWidget {{
     background-color: {LIGHT_BG};
     color: {TEXT_PRIMARY};
-    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
     font-size: 13px;
 }}
 
 QFrame#card {{
     background-color: {CARD_BG};
     border: 1px solid {BORDER_COLOR};
+    border-radius: 8px;
+}}
+
+QProgressBar {{
+    border: 1px solid {BORDER_COLOR};
     border-radius: 4px;
+    background-color: #f1f5f9;
+    text-align: center;
+    font-size: 12px;
+    color: {TEXT_PRIMARY};
+}}
+QProgressBar::chunk {{
+    background-color: {ACCENT_BLUE};
+    border-radius: 3px;
 }}
 
 QComboBox, QLineEdit {{
-    background-color: {CARD_BG};
+    background-color: #f8fafc;
     color: {TEXT_PRIMARY};
     border: 1px solid {BORDER_COLOR};
-    border-radius: 3px;
-    padding: 5px 8px;
+    border-radius: 6px;
+    padding: 6px 10px;
     font-size: 13px;
 }}
 QComboBox:hover, QLineEdit:hover {{
+    border-color: #cbd5e1;
+    background-color: {CARD_BG};
+}}
+QComboBox:focus, QLineEdit:focus {{
     border-color: {ACCENT_BLUE};
+    background-color: {CARD_BG};
 }}
 QComboBox::drop-down {{
     border: none;
-    width: 18px;
+    width: 20px;
 }}
 
 QPushButton {{
     background-color: {ACCENT_BLUE};
     color: white;
-    border: 1px solid {ACCENT_BLUE};
-    border-radius: 3px;
-    padding: 6px 14px;
-    font-weight: normal;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 16px;
+    font-weight: 600;
     font-size: 13px;
 }}
 QPushButton:hover {{
-    background-color: #004a85;
-    border-color: #004a85;
+    background-color: #1d4ed8;
 }}
 QPushButton:pressed {{
-    background-color: #003a6a;
+    background-color: #1e40af;
 }}
 QPushButton:disabled {{
-    background-color: #e0e0e0;
-    border-color: #d0d0d0;
-    color: {TEXT_SECONDARY};
+    background-color: #e2e8f0;
+    border-color: #cbd5e1;
+    color: #94a3b8;
 }}
 
 QPushButton#danger {{
     background-color: {DANGER_RED};
-    border-color: {DANGER_RED};
 }}
 QPushButton#danger:hover {{
-    background-color: #a32012;
+    background-color: #b91c1c;
 }}
 
 QPushButton#success {{
     background-color: {SUCCESS_GREEN};
-    border-color: {SUCCESS_GREEN};
 }}
 QPushButton#success:hover {{
-    background-color: #1a5f39;
+    background-color: #15803d;
 }}
 
 QPushButton#flat {{
     background-color: {CARD_BG};
     color: {TEXT_PRIMARY};
     border: 1px solid {BORDER_COLOR};
-    font-weight: normal;
+    font-weight: 500;
     font-size: 13px;
-    padding: 5px 10px;
+    padding: 6px 12px;
+    border-radius: 6px;
 }}
 QPushButton#flat:hover {{
-    background-color: #f0f0f0;
-    border-color: #b0b0b0;
+    background-color: #f1f5f9;
+    border-color: #cbd5e1;
 }}
 
 QPushButton#add_tab {{
-    background-color: transparent;
+    background-color: {CARD_BG};
     color: {ACCENT_BLUE};
     border: 1px solid {BORDER_COLOR};
-    border-radius: 3px;
-    font-size: 14px;
-    font-weight: normal;
+    border-radius: 6px;
+    font-size: 15px;
+    font-weight: bold;
     padding: 2px 10px;
-    min-height: 22px;
+    min-height: 24px;
 }}
 QPushButton#add_tab:hover {{
-    background-color: #f0f0f0;
+    background-color: #eff6ff;
     border-color: {ACCENT_BLUE};
 }}
 
@@ -153,13 +173,13 @@ QPushButton#browse_key {{
     background-color: {CARD_BG};
     color: {TEXT_PRIMARY};
     border: 1px solid {BORDER_COLOR};
-    border-radius: 3px;
+    border-radius: 6px;
     font-weight: normal;
     font-size: 13px;
-    padding: 5px 10px;
+    padding: 5px 12px;
 }}
 QPushButton#browse_key:hover {{
-    background-color: #f0f0f0;
+    background-color: #f1f5f9;
 }}
 
 QTabBar {{
@@ -167,54 +187,45 @@ QTabBar {{
 }}
 QTabBar::tab {{
     background-color: {CARD_BG};
-    color: {TEXT_PRIMARY};
+    color: {TEXT_SECONDARY};
     border: 1px solid {BORDER_COLOR};
-    border-bottom: none;
-    border-top-left-radius: 4px;
-    border-top-right-radius: 4px;
-    padding: 5px 12px;
-    margin-right: 2px;
+    border-radius: 6px;
+    padding: 6px 10px 6px 14px;
+    margin-right: 6px;
     font-size: 13px;
+    font-weight: 500;
 }}
 QTabBar::tab:selected {{
-    background-color: {CARD_BG};
-    border-bottom: 2px solid {ACCENT_BLUE};
+    background-color: #eff6ff;
+    border: 1px solid {ACCENT_BLUE};
     color: {ACCENT_BLUE};
-    font-weight: bold;
+    font-weight: 600;
 }}
 QTabBar::tab:hover:!selected {{
-    background-color: #f0f0f0;
-}}
-QTabBar::close-button {{
-    image: none;
-    subcontrol-position: right;
-    padding: 2px;
-}}
-QTabBar::close-button:hover {{
-    background: rgba(196, 43, 28, 0.12);
-    border-radius: 3px;
+    background-color: #f1f5f9;
+    color: {TEXT_PRIMARY};
 }}
 
 QTableWidget {{
     background-color: {CARD_BG};
     border: 1px solid {BORDER_COLOR};
-    border-radius: 4px;
-    gridline-color: #eeeeee;
-    selection-background-color: #d6e8f7;
+    border-radius: 8px;
+    gridline-color: #f1f5f9;
+    selection-background-color: #dbeafe;
     selection-color: {TEXT_PRIMARY};
     alternate-background-color: {TABLE_ALT_BG};
     font-size: 13px;
 }}
 QTableWidget::item {{
-    padding: 6px 10px;
+    padding: 8px 12px;
     border: none;
 }}
 QHeaderView::section {{
-    background-color: #e8e8e8;
-    color: {TEXT_PRIMARY};
+    background-color: #f1f5f9;
+    color: {TEXT_SECONDARY};
     font-size: 12px;
-    font-weight: bold;
-    padding: 6px 10px;
+    font-weight: 600;
+    padding: 8px 12px;
     border: none;
     border-bottom: 1px solid {BORDER_COLOR};
 }}
@@ -222,11 +233,11 @@ QHeaderView::section {{
 QTextEdit {{
     background-color: {CARD_BG};
     border: 1px solid {BORDER_COLOR};
-    border-radius: 4px;
-    padding: 8px;
-    font-family: Consolas, monospace;
+    border-radius: 8px;
+    padding: 10px;
+    font-family: Consolas, "Fira Code", monospace;
     font-size: 12px;
-    color: {TEXT_PRIMARY};
+    color: #334155;
 }}
 
 QScrollBar:vertical {{
@@ -235,12 +246,12 @@ QScrollBar:vertical {{
     margin: 0;
 }}
 QScrollBar::handle:vertical {{
-    background: #c0c0c0;
+    background: #cbd5e1;
     border-radius: 4px;
     min-height: 30px;
 }}
 QScrollBar::handle:vertical:hover {{
-    background: #909090;
+    background: #94a3b8;
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 
@@ -250,7 +261,7 @@ QSplitter::handle {{
 }}
 
 QLabel#title {{
-    font-size: 16px;
+    font-size: 18px;
     font-weight: bold;
     color: {TEXT_PRIMARY};
 }}
@@ -259,19 +270,19 @@ QLabel#subtitle {{
     color: {TEXT_SECONDARY};
 }}
 QLabel#section {{
-    font-size: 12px;
-    font-weight: bold;
-    color: {TEXT_SECONDARY};
+    font-size: 13px;
+    font-weight: 600;
+    color: {TEXT_PRIMARY};
 }}
 """
 
 ACTION_META = {
-    "WIN_TO_MAC":    ("Win -> Mac",   ACCENT_BLUE),
-    "MAC_TO_WIN":    ("Mac -> Win",   SUCCESS_GREEN),
-    "QUARANTINE_WIN": ("隔离 Win",    WARNING_YELLOW),
-    "QUARANTINE_MAC": ("隔离 Mac",    WARNING_YELLOW),
-    "CONFLICT":      ("冲突",         DANGER_RED),
-    "SKIP":          ("跳过",         TEXT_SECONDARY),
+    "WIN_TO_MAC":    ("▲ Win → Mac",  ACCENT_BLUE),
+    "MAC_TO_WIN":    ("▼ Mac → Win",  SUCCESS_GREEN),
+    "QUARANTINE_WIN": ("🗑 隔离 Win",   WARNING_YELLOW),
+    "QUARANTINE_MAC": ("🗑 隔离 Mac",   WARNING_YELLOW),
+    "CONFLICT":      ("⚡ 冲突",        DANGER_RED),
+    "SKIP":          ("— 跳过",        TEXT_SECONDARY),
 }
 
 
@@ -319,9 +330,10 @@ class ConnectionTester(QObject):
 class SyncWorker(QObject):
     """在 QThread 中执行扫描 / 合并 / 传输，通过信号回调主线程。"""
 
-    log = Signal(str)           # 普通日志行
-    plan_ready = Signal(list)   # dry-run plan 完成
-    done = Signal(bool, str)    # 完成(success, message)
+    log = Signal(str)                   # 普通日志行
+    progress = Signal(int, int, str)    # 进度 (current, total, status_msg)
+    plan_ready = Signal(list)           # dry-run plan 完成
+    done = Signal(bool, str)            # 完成 (success, message)
 
     def __init__(self, cfg, do_execute=False, approved_plan=None):
         super().__init__()
@@ -332,6 +344,14 @@ class SyncWorker(QObject):
         self._sftp = None
         self._win_manifest = None
         self._mac_manifest = None
+        self._cancelled = False
+
+    def stop(self):
+        """发送终止请求"""
+        self._cancelled = True
+
+    def _is_cancelled(self):
+        return self._cancelled
 
     def scan_and_plan(self):
         try:
@@ -342,26 +362,51 @@ class SyncWorker(QObject):
             exclude = cfg.get("exclude", [])
             text_ext = cfg.get("text_extensions", [])
 
-            self.log.emit(f"扫描本地: {local_root}")
-            local_mf = scanner.scan(local_root, exclude, text_ext)
-            self.log.emit(f"  → {len(local_mf)} 个文件")
+            self.log.emit(f"开始扫描本地: {local_root}")
+            self.progress.emit(0, 0, f"正在扫描本地目录...")
 
-            self.log.emit(f"连接 {r['host']}:{r['port']} ...")
+            def scan_progress(count, path):
+                if count % 200 == 0 or count == 1:
+                    self.progress.emit(0, 0, f"正在扫描本地... 已发现 {count} 个文件")
+
+            local_mf = scanner.scan(
+                local_root, exclude, text_ext,
+                progress_callback=scan_progress,
+                cancel_check=self._is_cancelled
+            )
+
+            if self._is_cancelled():
+                self.done.emit(False, "任务已被用户取消。")
+                return
+
+            self.log.emit(f"✓ 本地扫描完毕，共 {len(local_mf)} 个文件")
+
+            self.log.emit(f"正在连接 SSH 主机 {r['host']}:{r['port']} ...")
+            self.progress.emit(0, 0, f"连接 SSH 主机...")
             self._ssh, self._sftp = sftp.connect(r)
-            self.log.emit("  → 连接成功")
+            self.log.emit("✓ SSH 连接成功")
 
-            self.log.emit(f"扫描远端: {remote_root}")
+            if self._is_cancelled():
+                self.done.emit(False, "任务已被用户取消。")
+                return
+
+            self.log.emit(f"开始扫描远端: {remote_root}")
+            self.progress.emit(0, 0, f"正在扫描远端目录...")
             remote_mf = sftp.remote_scan(self._ssh, remote_root, exclude, text_ext)
-            self.log.emit(f"  → {len(remote_mf)} 个文件")
+
+            if self._is_cancelled():
+                self.done.emit(False, "任务已被用户取消。")
+                return
+
+            self.log.emit(f"✓ 远端扫描完毕，共 {len(remote_mf)} 个文件")
 
             from duetflow.cli import load_baseline
             baseline = load_baseline()
             if not baseline:
-                self.log.emit("未找到 baseline，进入冷启动（并集）模式")
+                self.log.emit("未找到历史 baseline 快照，进入冷启动并集模式")
                 baseline = {}
 
-            self.log.emit("计算三路合并...")
-            # 将本地作为 win_manifest，远端作为 mac_manifest (统一命名处理)
+            self.log.emit("正在进行三路合并计算...")
             if r["is_win"]:
                 win_mf, mac_mf = local_mf, remote_mf
             else:
@@ -396,14 +441,23 @@ class SyncWorker(QObject):
             remote_root = r["remote_root"]
             is_win = r["is_win"]
             plan = self.approved_plan
+            total = len(plan)
 
             import shutil as _shutil
 
-            for item in plan:
+            for idx, item in enumerate(plan):
+                if self._is_cancelled():
+                    self.done.emit(False, "同步任务已被用户中途取消。")
+                    return
+
                 action = item["action"]
                 path = item["path"]
+                step_num = idx + 1
+                msg = f"({step_num}/{total}) {action} -> {path}"
+                self.log.emit(f"[{step_num}/{total}] {action}: {path}")
+                self.progress.emit(step_num, total, msg)
 
-                # 转换方向为 [本地 -> 远端] 或 [远端 -> 本地]
+                # 转换方向
                 if is_win:
                     to_remote_action = "WIN_TO_MAC"
                     to_local_action = "MAC_TO_WIN"
@@ -419,23 +473,17 @@ class SyncWorker(QObject):
                 remote_full = str(PurePosixPath(remote_root) / path)
 
                 if action == to_remote_action:
-                    self.log.emit(f"上传 {path}")
                     sftp.upload(self._sftp, local_full, remote_full)
                 elif action == to_local_action:
-                    self.log.emit(f"下载 {path}")
                     sftp.download(self._sftp, remote_full, local_full)
                 elif action == quarantine_local_action:
-                    self.log.emit(f"隔离本地: {path}")
                     trash.quarantine_local(path, local_root)
                 elif action == quarantine_remote_action:
-                    self.log.emit(f"隔离远端: {path}")
                     remote_trash = str(PurePosixPath(remote_root).parent / ".sync_trash")
                     sftp.remote_quarantine(self._ssh, remote_full, remote_trash)
                 elif action == "CONFLICT":
                     reason = item.get("reason", "")
-                    if reason == "modified_vs_deleted":
-                        self.log.emit(f"冲突(改/删) 跳过: {path}")
-                    else:
+                    if reason != "modified_vs_deleted":
                         conflict_name = item["conflict_name"]
                         local_conflict = local_full.parent / Path(conflict_name).name
                         if local_full.exists():
@@ -444,19 +492,22 @@ class SyncWorker(QObject):
                             self._sftp, remote_full,
                             local_conflict.parent / f"_remote_{Path(conflict_name).name}"
                         )
-                        self.log.emit(f"冲突保留: {conflict_name}")
 
             from duetflow.cli import save_baseline
             save_baseline(self._win_manifest, self._mac_manifest)
             trash.purge_expired(local_root, cfg.get("safety", {}).get("quarantine_days", 30))
 
-            self.done.emit(True, "同步完成，Baseline 已更新。")
+            self.progress.emit(total, total, "同步完成")
+            self.done.emit(True, "同步完成，Baseline 快照已成功更新。")
 
         except Exception:
             self.done.emit(False, traceback.format_exc())
         finally:
             if self._ssh:
-                self._ssh.close()
+                try:
+                    self._ssh.close()
+                except Exception:
+                    pass
 
 
 # ─── 主窗口 ──────────────────────────────────────────────────────────────────
@@ -546,9 +597,20 @@ class MainWindow(QWidget):
         rv.setContentsMargins(0, 0, 0, 0)
         rv.setSpacing(6)
 
+        log_header = QHBoxLayout()
         log_label = QLabel("运行控制台日志")
         log_label.setObjectName("section")
-        rv.addWidget(log_label)
+        log_header.addWidget(log_label)
+        log_header.addStretch()
+
+        self._clear_log_btn = QPushButton("清空")
+        self._clear_log_btn.setObjectName("flat")
+        self._clear_log_btn.setFixedHeight(24)
+        self._clear_log_btn.setStyleSheet("font-size: 11px; padding: 2px 8px;")
+        self._clear_log_btn.clicked.connect(lambda: self._log.clear())
+        log_header.addWidget(self._clear_log_btn)
+
+        rv.addLayout(log_header)
 
         self._log = QTextEdit()
         self._log.setReadOnly(True)
@@ -559,20 +621,34 @@ class MainWindow(QWidget):
 
         # ── Bottom Action Buttons ───────────────────────────────────────────
         btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setFixedHeight(24)
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._progress_bar.hide()
+        btn_row.addWidget(self._progress_bar, 1)
+
+        self._stop_btn = QPushButton("停止")
+        self._stop_btn.setObjectName("danger")
+        self._stop_btn.setFixedHeight(32)
+        self._stop_btn.hide()
+        self._stop_btn.clicked.connect(self._stop_task)
+        btn_row.addWidget(self._stop_btn)
+
         self._scan_btn = QPushButton("扫描并预览变动")
         self._scan_btn.setFixedHeight(32)
         self._scan_btn.clicked.connect(self._start_scan)
+        btn_row.addWidget(self._scan_btn)
 
         self._exec_btn = QPushButton("确认同步执行")
         self._exec_btn.setObjectName("success")
         self._exec_btn.setFixedHeight(32)
         self._exec_btn.setEnabled(False)
         self._exec_btn.clicked.connect(self._start_execute)
-
-        btn_row.addStretch()
-        btn_row.addWidget(self._scan_btn)
-        btn_row.addSpacing(12)
         btn_row.addWidget(self._exec_btn)
+
         root.addLayout(btn_row)
 
     def _build_connection_bar(self, parent_layout):
@@ -581,30 +657,28 @@ class MainWindow(QWidget):
         bar_row.setSpacing(4)
         bar_row.setContentsMargins(0, 0, 0, 0)
 
-        bar_label = QLabel("连接")
+        bar_label = QLabel("连接配置:")
         bar_label.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {TEXT_SECONDARY}; margin-right: 6px;")
         bar_row.addWidget(bar_label)
 
-        self._tab_bar = QTabBar()
-        self._tab_bar.setTabsClosable(True)
-        self._tab_bar.setExpanding(False)
-        self._tab_bar.setDrawBase(False)
-        self._tab_bar.currentChanged.connect(self._on_tab_changed)
-        self._tab_bar.tabCloseRequested.connect(self._close_tab)
-        # 自定义关闭按钮文本
-        for i in range(self._tab_bar.count()):
-            tab_btn = self._tab_bar.tabButton(i, QTabBar.RightSide)
-            if tab_btn:
-                tab_btn.setText("✕")
-        bar_row.addWidget(self._tab_bar, 1)
+        self._conn_combo = QComboBox()
+        self._conn_combo.setMinimumWidth(200)
+        self._conn_combo.currentIndexChanged.connect(self._on_tab_changed)
+        bar_row.addWidget(self._conn_combo)
 
-        self._add_tab_btn = QPushButton("+")
-        self._add_tab_btn.setObjectName("add_tab")
-        self._add_tab_btn.setFixedSize(32, 28)
-        self._add_tab_btn.setToolTip("新增连接")
+        self._add_tab_btn = QPushButton("+ 新增")
+        self._add_tab_btn.setObjectName("flat")
+        self._add_tab_btn.setFixedHeight(30)
         self._add_tab_btn.clicked.connect(self._add_new_tab)
         bar_row.addWidget(self._add_tab_btn)
 
+        self._del_tab_btn = QPushButton("删除当前连接")
+        self._del_tab_btn.setObjectName("flat")
+        self._del_tab_btn.setFixedHeight(30)
+        self._del_tab_btn.clicked.connect(self._delete_current_tab)
+        bar_row.addWidget(self._del_tab_btn)
+
+        bar_row.addStretch()
         parent_layout.addLayout(bar_row)
 
     def _build_connection_card(self, parent_layout):
@@ -702,20 +776,36 @@ class MainWindow(QWidget):
         parent_layout.addWidget(self._conn_card)
 
     def _build_path_info(self, parent_layout):
-        """构建路径信息行。"""
-        path_row = QHBoxLayout()
-        path_row.setSpacing(24)
+        """构建同步路径设置卡片。"""
+        self._path_card = QFrame()
+        self._path_card.setObjectName("card")
+        path_layout = QHBoxLayout(self._path_card)
+        path_layout.setContentsMargins(16, 10, 16, 10)
+        path_layout.setSpacing(12)
 
-        self._local_path_lbl = QLabel("本地根路径: 未配置")
-        self._local_path_lbl.setObjectName("subtitle")
-        path_row.addWidget(self._local_path_lbl)
+        # 本地路径
+        path_layout.addWidget(QLabel("本地目录:"))
+        self._local_path_edit = QLineEdit()
+        self._local_path_edit.setPlaceholderText("选择或输入本地同步根目录 (e.g. D:/Work)")
+        self._local_path_edit.editingFinished.connect(self._on_sync_path_changed)
+        path_layout.addWidget(self._local_path_edit, 1)
 
-        self._remote_path_lbl = QLabel("远端根路径: 未配置")
-        self._remote_path_lbl.setObjectName("subtitle")
-        path_row.addWidget(self._remote_path_lbl)
+        self._browse_local_btn = QPushButton("选择目录...")
+        self._browse_local_btn.setObjectName("flat")
+        self._browse_local_btn.setFixedHeight(30)
+        self._browse_local_btn.clicked.connect(self._select_local_folder)
+        path_layout.addWidget(self._browse_local_btn)
 
-        path_row.addStretch()
-        parent_layout.addLayout(path_row)
+        path_layout.addSpacing(16)
+
+        # 远端路径
+        path_layout.addWidget(QLabel("远端目录:"))
+        self._remote_path_edit = QLineEdit()
+        self._remote_path_edit.setPlaceholderText("输入远端同步根目录 (e.g. /Users/name/WorkSpace)")
+        self._remote_path_edit.editingFinished.connect(self._on_sync_path_changed)
+        path_layout.addWidget(self._remote_path_edit, 1)
+
+        parent_layout.addWidget(self._path_card)
 
     # ── 连接选项卡管理 ──────────────────────────────────────────────────────
 
@@ -745,7 +835,7 @@ class MainWindow(QWidget):
         self._tab_updating = False
 
     def _on_field_changed(self):
-        """输入字段变更时，实时同步到当前选项卡数据。"""
+        """输入字段变更时，实时同步到当前连接数据与下拉列表。"""
         if self._tab_updating:
             return
         if self._current_idx < 0 or self._current_idx >= len(self._connections):
@@ -755,16 +845,16 @@ class MainWindow(QWidget):
         conn["port"] = self._port_number()
         conn["user"] = self._user_edit.text().strip()
         conn["key_path"] = self._key_edit.text().strip()
-        # 更新选项卡标签
+        # 更新下拉框文本
         label = conn["host"] or "新连接"
-        self._tab_bar.setTabText(self._current_idx, label)
+        self._conn_combo.setItemText(self._current_idx, label)
         # 重置连接状态
         self._conn_status_lbl.setText("未检测")
         self._conn_status_lbl.setStyleSheet(f"color: {TEXT_SECONDARY};")
         self._conn_err_detail_lbl.setVisible(False)
 
     def _add_new_tab(self):
-        """新增一个空白连接选项卡。"""
+        """新增一个空白连接配置。"""
         if len(self._connections) >= MAX_CONNECTIONS:
             QMessageBox.information(self, "提示", f"最多保留 {MAX_CONNECTIONS} 个连接记录")
             return
@@ -773,10 +863,11 @@ class MainWindow(QWidget):
         self._connections.append(new_conn)
 
         self._tab_updating = True
-        idx = self._tab_bar.addTab("新连接")
+        self._conn_combo.addItem("新连接")
         self._tab_updating = False
 
-        self._tab_bar.setCurrentIndex(idx)
+        idx = self._conn_combo.count() - 1
+        self._conn_combo.setCurrentIndex(idx)
         self._current_idx = idx
         self._fill_fields_from_conn(new_conn)
 
@@ -786,25 +877,26 @@ class MainWindow(QWidget):
 
         self._save_connections_to_disk()
 
-    def _close_tab(self, index):
-        """关闭指定选项卡。"""
+    def _delete_current_tab(self):
+        """删除当前选中的连接配置。"""
         if len(self._connections) <= 1:
-            QMessageBox.information(self, "提示", "至少保留一个连接")
+            QMessageBox.information(self, "提示", "至少保留一个连接记录")
             return
+        index = self._conn_combo.currentIndex()
         if index < 0 or index >= len(self._connections):
             return
 
         # 移除数据
         self._connections.pop(index)
         self._tab_updating = True
-        self._tab_bar.removeTab(index)
+        self._conn_combo.removeItem(index)
         self._tab_updating = False
 
         # 切换选中
-        new_count = self._tab_bar.count()
+        new_count = self._conn_combo.count()
         if new_count > 0:
             new_idx = min(index, new_count - 1)
-            self._tab_bar.setCurrentIndex(new_idx)
+            self._conn_combo.setCurrentIndex(new_idx)
         else:
             self._current_idx = -1
 
@@ -822,7 +914,7 @@ class MainWindow(QWidget):
     def _save_connections_to_disk(self):
         """将当前连接列表持久化到 connections.json。"""
         from duetflow.config import save_connections
-        save_connections(self._connections, self._tab_bar.currentIndex())
+        save_connections(self._connections, self._conn_combo.currentIndex())
 
     # ── 构建运行时配置 ──────────────────────────────────────────────────────
 
@@ -837,6 +929,31 @@ class MainWindow(QWidget):
             pass
         return 22
 
+    def _select_local_folder(self):
+        """选择本地根同步目录。"""
+        current = self._local_path_edit.text().strip() or str(Path.home())
+        folder = QFileDialog.getExistingDirectory(self, "选择本地同步根目录", current)
+        if folder:
+            self._local_path_edit.setText(folder)
+            self._on_sync_path_changed()
+
+    def _on_sync_path_changed(self):
+        """同步根路径变更回调：写回 config.json5 并更新内存配置。"""
+        if not self._cfg:
+            return
+        local_path = self._local_path_edit.text().strip()
+        remote_path = self._remote_path_edit.text().strip()
+        is_win = sys.platform == "win32"
+        win_root = local_path if is_win else remote_path
+        mac_root = remote_path if is_win else local_path
+
+        self._cfg["sync_paths"]["windows_root"] = win_root
+        self._cfg["sync_paths"]["mac_root"] = mac_root
+        self._update_resolved_from_fields()
+
+        from duetflow import config as cfg_mod
+        cfg_mod.save_sync_paths(win_root, mac_root)
+
     def _update_resolved_from_fields(self):
         """从当前输入字段 + self._cfg 的静态配置，构建 _resolved。"""
         if not self._cfg:
@@ -846,6 +963,9 @@ class MainWindow(QWidget):
         port = self._port_number()
         user = self._user_edit.text().strip()
         key_path = self._key_edit.text().strip()
+
+        local_path = self._local_path_edit.text().strip()
+        remote_path = self._remote_path_edit.text().strip()
 
         # 如果密钥为空，自动探测
         if not key_path:
@@ -860,6 +980,8 @@ class MainWindow(QWidget):
         r["port"] = port
         r["user"] = user
         r["key_path"] = key_path
+        r["local_root"] = local_path
+        r["remote_root"] = remote_path
 
         local_ip = self._local_ip_combo.itemData(self._local_ip_combo.currentIndex()) or ""
         r["local_ip"] = local_ip
@@ -898,13 +1020,13 @@ class MainWindow(QWidget):
             self._local_ip_combo.blockSignals(False)
 
             # 更新路径信息
-            win_root = self._cfg["sync_paths"]["windows_root"]
-            mac_root = self._cfg["sync_paths"]["mac_root"]
+            win_root = self._cfg["sync_paths"].get("windows_root", "")
+            mac_root = self._cfg["sync_paths"].get("mac_root", "")
             is_win = sys.platform == "win32"
             local_path = win_root if is_win else mac_root
             remote_path = mac_root if is_win else win_root
-            self._local_path_lbl.setText(f"本地根路径: {local_path}")
-            self._remote_path_lbl.setText(f"远端根路径: {remote_path}")
+            self._local_path_edit.setText(local_path)
+            self._remote_path_edit.setText(remote_path)
 
             # 加载连接历史
             connections, last_idx = cfg_mod.load_connections()
@@ -921,18 +1043,18 @@ class MainWindow(QWidget):
 
             self._connections = connections
 
-            # 填充选项卡
+            # 填充下拉列表
             self._tab_updating = True
-            self._tab_bar.clear()
+            self._conn_combo.clear()
             for conn in connections:
                 label = conn.get("host", "") or "新连接"
-                self._tab_bar.addTab(label)
+                self._conn_combo.addItem(label)
             self._tab_updating = False
 
-            # 选中上次使用的选项卡
+            # 选中上次使用的连接
             if connections:
                 safe_idx = max(0, min(last_idx, len(connections) - 1))
-                self._tab_bar.setCurrentIndex(safe_idx)
+                self._conn_combo.setCurrentIndex(safe_idx)
                 self._current_idx = safe_idx
                 self._fill_fields_from_conn(connections[safe_idx])
 
@@ -1006,7 +1128,7 @@ class MainWindow(QWidget):
                     conn["port"] = self._port_number()
                     conn["user"] = self._user_edit.text().strip()
                     conn["key_path"] = self._key_edit.text().strip()
-                    self._tab_bar.setTabText(self._current_idx, host or "新连接")
+                    self._conn_combo.setItemText(self._current_idx, host or "新连接")
                 self._save_connections_to_disk()
         else:
             self._conn_status_lbl.setText("无法连接")
@@ -1035,6 +1157,7 @@ class MainWindow(QWidget):
         worker_obj.moveToThread(thread)
         thread.started.connect(worker_obj.scan_and_plan)
         worker_obj.log.connect(self._append_log)
+        worker_obj.progress.connect(self._on_progress_update)
         worker_obj.plan_ready.connect(self._on_plan_ready)
         worker_obj.done.connect(lambda ok, msg: self._on_done(ok, msg, thread))
         thread.start()
@@ -1100,9 +1223,25 @@ class MainWindow(QWidget):
         worker.moveToThread(thread)
         thread.started.connect(worker.execute_plan)
         worker.log.connect(self._append_log)
+        worker.progress.connect(self._on_progress_update)
         worker.done.connect(lambda ok, msg: self._on_done(ok, msg, thread))
         thread.start()
         self._thread = thread
+
+    def _stop_task(self):
+        if self._worker_obj:
+            self._append_log("正在发送中途取消指令，等待当前异步步骤安全退出...")
+            self._stop_btn.setEnabled(False)
+            self._stop_btn.setText("正在取消...")
+            self._worker_obj.stop()
+
+    def _on_progress_update(self, current, total, msg):
+        self._set_status(msg, ACCENT_BLUE)
+        if total == 0:
+            self._progress_bar.setRange(0, 0)  # Busy 走马灯模式
+        else:
+            self._progress_bar.setRange(0, total)
+            self._progress_bar.setValue(current)
 
     def _on_done(self, ok, msg, thread):
         thread.quit()
@@ -1112,8 +1251,11 @@ class MainWindow(QWidget):
             self._set_status("同步完成", SUCCESS_GREEN)
             self._exec_btn.setEnabled(False)
         else:
-            self._set_status("发生错误", DANGER_RED)
-            self._append_log(f"[错误提示]\n{msg}")
+            if "取消" in msg:
+                self._set_status("任务已取消", WARNING_YELLOW)
+            else:
+                self._set_status("发生错误", DANGER_RED)
+                self._append_log(f"[错误提示]\n{msg}")
         self._append_log(msg)
 
     # ── Helpers ──────────────────────────────────────────────────────────────
@@ -1128,7 +1270,16 @@ class MainWindow(QWidget):
 
     def _set_busy(self, busy):
         self._scan_btn.setEnabled(not busy)
-        self._scan_btn.setText("正在扫描计算中..." if busy else "扫描并预览变动")
+        self._scan_btn.setText("正在计算中..." if busy else "扫描并预览变动")
+        if busy:
+            self._progress_bar.show()
+            self._progress_bar.setRange(0, 0)
+            self._stop_btn.show()
+            self._stop_btn.setEnabled(True)
+            self._stop_btn.setText("停止")
+        else:
+            self._progress_bar.hide()
+            self._stop_btn.hide()
 
 
 # ─── 入口 ─────────────────────────────────────────────────────────────────────

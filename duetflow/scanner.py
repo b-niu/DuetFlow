@@ -36,13 +36,17 @@ def _file_hash(filepath, is_text):
     return h.hexdigest()
 
 
-def scan(root, exclude_patterns, text_extensions):
+def scan(root, exclude_patterns, text_extensions, progress_callback=None, cancel_check=None):
     """扫描 root 目录，返回文件清单 dict。遇到锁文件则标记 LOCKED 跳过。"""
     root = Path(root)
     manifest = {}
     text_ext_set = set(ext.lower() for ext in text_extensions)
+    scanned_count = 0
 
     for dirpath, dirnames, filenames in os.walk(root):
+        if cancel_check and cancel_check():
+            break
+
         rel_dir = os.path.relpath(dirpath, root)
 
         # 剪枝：将被排除的子目录从递归中移除
@@ -55,11 +59,18 @@ def scan(root, exclude_patterns, text_extensions):
         ]
 
         for fname in filenames:
+            if cancel_check and cancel_check():
+                break
+
             full = os.path.join(dirpath, fname)
             rel = os.path.relpath(full, root).replace("\\", "/")
 
             if _is_excluded(rel, exclude_patterns):
                 continue
+
+            scanned_count += 1
+            if progress_callback and (scanned_count % 50 == 0 or scanned_count == 1):
+                progress_callback(scanned_count, rel)
 
             # Windows 文件名非法字符检查（针对 Mac 端传来的路径）
             if any(c in fname for c in WIN_ILLEGAL):
