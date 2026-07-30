@@ -13,6 +13,11 @@ dependencies = [
     "pyside6>=6.7.0",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
 [tool.uv]
 package = false
 
@@ -31,3 +36,8 @@ select = ["E", "F", "I", "W"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
