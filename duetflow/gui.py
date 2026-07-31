@@ -336,13 +336,13 @@ class SyncWorker(QObject):
     done = Signal(bool, str)            # 完成 (success, message)
 
     def __init__(self, cfg, do_execute=False, approved_plan=None,
-                 win_manifest=None, mac_manifest=None):
+                 win_manifest=None, mac_manifest=None, ssh=None, sftp_client=None):
         super().__init__()
         self.cfg = cfg
         self.do_execute = do_execute
         self.approved_plan = approved_plan
-        self._ssh = None
-        self._sftp = None
+        self._ssh = ssh
+        self._sftp = sftp_client
         self._win_manifest = win_manifest
         self._mac_manifest = mac_manifest
         self._cancelled = False
@@ -489,6 +489,15 @@ class SyncWorker(QObject):
 
             self._win_manifest = win_mf
             self._mac_manifest = mac_mf
+
+            # 扫描完成即落盘 baseline 快照，避免因"从未完整执行同步"而一直处于
+            # 冷启动死循环（历史记录永远建立不起来）。执行成功后会再次刷新。
+            try:
+                from duetflow.cli import save_baseline
+                save_baseline(self._win_manifest, self._mac_manifest)
+            except Exception as e:
+                self.log.emit(f"⚠ 保存 baseline 快照失败: {e}")
+
             self.plan_ready.emit(plan)
 
         except Exception:
@@ -554,9 +563,16 @@ class SyncWorker(QObject):
                             local_conflict.parent / f"_remote_{Path(conflict_name).name}"
                         )
 
-            from duetflow.cli import save_baseline
-            save_baseline(self._win_manifest, self._mac_manifest)
-            trash.purge_expired(local_root, cfg.get("safety", {}).get("quarantine_days", 30))
+            # 优先保存 baseline（单独 try，避免被后续清理步骤异常连累而丢失历史记录）
+            try:
+                from duetflow.cli import save_baseline
+                save_baseline(self._win_manifest, self._mac_manifest)
+            except Exception as e:
+                self.log.emit(f"⚠ 保存 baseline 快照失败: {e}")
+            try:
+                trash.purge_expired(local_root, cfg.get("safety", {}).get("quarantine_days", 30))
+            except Exception as e:
+                self.log.emit(f"⚠ 清理过期隔离文件失败: {e}")
 
             self.progress.emit(total, total, "同步完成")
             self.done.emit(True, "同步完成，Baseline 快照已成功更新。")
@@ -1278,14 +1294,18 @@ class MainWindow(QWidget):
         self._append_log("─" * 45)
         self._append_log("确认无误，开始执行同步文件传输与隔离...")
 
-        # 从扫描阶段的工作线程中复用清单，否则 save_baseline 会因 manifest 为
-        # None 崩溃，导致 baseline 永远写不出去，每次都回到冷启动模式。
+        # 从扫描阶段的工作线程中复用清单与 SSH 连接，否则 manifest 为 None 时
+        # save_baseline 会崩溃（baseline 永远写不出去），SSH/SFTP 为 None 时
+        # 执行传输也会崩溃。
         scan_worker = getattr(self, "_worker_obj", None)
         win_manifest = scan_worker._win_manifest if scan_worker else None
         mac_manifest = scan_worker._mac_manifest if scan_worker else None
+        scan_ssh = scan_worker._ssh if scan_worker else None
+        scan_sftp = scan_worker._sftp if scan_worker else None
         worker = SyncWorker(
             self._cfg, do_execute=True, approved_plan=active,
             win_manifest=win_manifest, mac_manifest=mac_manifest,
+            ssh=scan_ssh, sftp_client=scan_sftp,
         )
         self._worker_obj = worker
         thread = QThread()
