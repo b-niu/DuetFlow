@@ -489,19 +489,19 @@ class SyncWorker(QObject):
 
             self._win_manifest = win_mf
             self._mac_manifest = mac_mf
-
-            # 扫描完成即落盘 baseline 快照，避免因"从未完整执行同步"而一直处于
-            # 冷启动死循环（历史记录永远建立不起来）。执行成功后会再次刷新。
-            try:
-                from duetflow.cli import save_baseline
-                save_baseline(self._win_manifest, self._mac_manifest)
-            except Exception as e:
-                self.log.emit(f"⚠ 保存 baseline 快照失败: {e}")
-
             self.plan_ready.emit(plan)
 
         except Exception:
             self.done.emit(False, traceback.format_exc())
+        finally:
+            # 扫描完成后立即释放 SSH 连接，避免连接泄漏；执行阶段会重新建立连接。
+            if self._ssh:
+                try:
+                    self._ssh.close()
+                except Exception:
+                    pass
+                self._ssh = None
+                self._sftp = None
 
     def execute_plan(self):
         try:
@@ -514,6 +514,13 @@ class SyncWorker(QObject):
             total = len(plan)
 
             import shutil as _shutil
+
+            # 执行阶段自行建立 SSH 连接（不复用扫描线程的连接，避免跨线程使用
+            # paramiko 导致崩溃）。扫描阶段只在需要时才建立连接。
+            if not self._ssh or not self._sftp:
+                self.log.emit(f"正在连接 SSH 主机 {r['host']}:{r['port']} ...")
+                self._ssh, self._sftp = sftp.connect(r)
+                self.log.emit("✓ SSH 连接成功")
 
             for idx, item in enumerate(plan):
                 if self._is_cancelled():
@@ -1294,18 +1301,15 @@ class MainWindow(QWidget):
         self._append_log("─" * 45)
         self._append_log("确认无误，开始执行同步文件传输与隔离...")
 
-        # 从扫描阶段的工作线程中复用清单与 SSH 连接，否则 manifest 为 None 时
-        # save_baseline 会崩溃（baseline 永远写不出去），SSH/SFTP 为 None 时
-        # 执行传输也会崩溃。
+        # 复用扫描阶段得到的清单（纯数据），但 SSH/SFTP 连接不跨线程复用——
+        # paramiko 的 SFTP 连接非线程安全，跨线程使用可能导致进程崩溃退出。
+        # 执行阶段会自行建立新连接。
         scan_worker = getattr(self, "_worker_obj", None)
         win_manifest = scan_worker._win_manifest if scan_worker else None
         mac_manifest = scan_worker._mac_manifest if scan_worker else None
-        scan_ssh = scan_worker._ssh if scan_worker else None
-        scan_sftp = scan_worker._sftp if scan_worker else None
         worker = SyncWorker(
             self._cfg, do_execute=True, approved_plan=active,
             win_manifest=win_manifest, mac_manifest=mac_manifest,
-            ssh=scan_ssh, sftp_client=scan_sftp,
         )
         self._worker_obj = worker
         thread = QThread()
