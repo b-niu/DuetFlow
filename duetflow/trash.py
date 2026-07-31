@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 
-def quarantine_local(file_path, win_root, quarantine_days=30):
+def quarantine_local(file_path, win_root):
     """将 Windows 端文件移入本地隔离区 .sync_trash/<YYYYMMDD>/"""
     root = Path(win_root)
     trash_root = root.parent / ".sync_trash"

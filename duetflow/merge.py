@@ -76,6 +76,10 @@ def three_way_merge(win_manifest, mac_manifest, baseline):
         if not win_changed and not mac_changed and not win_deleted and not mac_deleted:
             plan.append({"action": "SKIP", "path": path, "reason": "unchanged"})
 
+        # Case 1.5: 双端均已删除
+        elif win_deleted and mac_deleted:
+            plan.append({"action": "SKIP", "path": path, "reason": "both_deleted"})
+
         # Case 2: Win 修改，Mac 未变
         elif win_changed and not mac_changed and not mac_deleted:
             plan.append({"action": "WIN_TO_MAC", "path": path})

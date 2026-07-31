@@ -225,7 +225,10 @@ def main():
     console.print("  连接成功")
 
     console.print("\n[bold blue]● 扫描 Mac 端文件...[/]")
-    mac_manifest = sftp.remote_scan(ssh, mac_root, exclude, text_ext)
+    mac_manifest = sftp.remote_scan(
+        ssh, mac_root, exclude, text_ext,
+        prev_manifest=baseline_for_cache,
+    )
     console.print(f"  Mac 端: {len(mac_manifest)} 个文件")
 
     # 3. 加载 baseline（用于三路合并；已在步骤 1 提前加载过，直接复用）

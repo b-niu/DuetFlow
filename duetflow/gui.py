@@ -410,13 +410,23 @@ class SyncWorker(QObject):
 
             self.log.emit(f"开始扫描远端: {remote_root}")
             self.progress.emit(0, 0, "正在扫描远端目录...")
-            remote_mf = sftp.remote_scan(self._ssh, remote_root, exclude, text_ext)
+            remote_mf = sftp.remote_scan(
+                self._ssh, remote_root, exclude, text_ext,
+                prev_manifest=baseline_for_cache,
+            )
 
             if self._is_cancelled():
                 self.done.emit(False, "任务已被用户取消。")
                 return
 
-            self.log.emit(f"✓ 远端扫描完毕，共 {len(remote_mf)} 个文件")
+            mac_cached = sum(
+                1 for rel, e in remote_mf.items()
+                if not e.get("status") and baseline_for_cache.get(rel, {}).get("mtime") == e.get("mtime")
+            )
+            self.log.emit(
+                f"✓ 远端扫描完毕，共 {len(remote_mf)} 个文件"
+                + (f"（{mac_cached} 个命中 mtime 缓存，跳过 I/O）" if mac_cached else "")
+            )
             if len(remote_mf) == 0:
                 self.log.emit("⚠ 远端目录无任何文件！可能原因：远端目录不存在、路径含 ~ 未展开、或扫描脚本出错")
 
