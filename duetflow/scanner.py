@@ -35,15 +35,7 @@ def _is_hidden_entry(name):
 
 
 def _is_excluded(rel_path, exclude_patterns):
-    """判断相对路径是否匹配任一排除模式。
-
-    使用 pathlib.PurePosixPath.full_match()（Python 3.12+），
-    原生支持 ** 多级目录通配，语义精确：
-      - "**/.git"       → 匹配任意深度的 .git 目录本身
-      - "**/.git/**"    → 匹配 .git 目录内的任意文件/子目录
-      - "**/node_modules" → 匹配任意深度的 node_modules 目录本身
-      - "**/.DS_Store"  → 匹配任意深度的 .DS_Store 文件
-    """
+    """判断相对路径是否匹配任一排除模式（使用 pathlib.PurePosixPath.full_match）。"""
     p = rel_path.replace("\\", "/")
     path_obj = PurePosixPath(p)
     return any(path_obj.full_match(pattern) for pattern in exclude_patterns)

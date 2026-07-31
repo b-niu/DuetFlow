@@ -1,43 +1,44 @@
-// DuetFlow 配置示例（复制一份重命名为 config.json5 使用）
-// config.json5 会被 git 自动忽略，切勿提交真实敏感信息
-// JSON5 支持：不加引号的 key、行注释/块注释、末尾逗号
-
 {
-    sync_paths: {
-        windows_root: "D:/Workspaces/Projects",
-        mac_root: "/Users/your_mac_username/Workspaces/Projects",
-    },
-
-    exclude: [
-        "**/.git",
-        "**/.git/**",
-        "**/.cursor",
-        "**/.claude",
-        "**/node_modules",
-        "**/__pycache__",
-        "**/.venv",
-        "**/.env",
-        "**/.DS_Store",
-        "**/._*",
-        "**/Thumbs.db",
-    ],
-
-    text_extensions: [
-        ".py", ".md", ".txt", ".json",
-        ".yaml", ".yml", ".csv", ".sh",
-        ".toml", ".ini",
-    ],
-
-    safety: {
-        quarantine_days: 30,
-        circuit_breaker: {
-            max_ratio: 0.20,
-            max_count: 50,
-        },
-    },
-
-    baseline: {
-        authority: "desktop",
-        file_name: "baseline.json.gz",
-    },
+  "local_ip": "192.168.1.100",
+  "sync_paths": {
+    "windows_root": "D:/WorkSpace",
+    "mac_root": "/Users/username/WorkSpace"
+  },
+  "mac_app_dir": "/Users/username/MyGithub/DuetFlow",
+  "exclude": [
+    "**/.git",
+    "**/.git/**",
+    "**/.cursor",
+    "**/.claude",
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.venv",
+    "**/.env",
+    "**/.DS_Store",
+    "**/._*",
+    "**/Thumbs.db"
+  ],
+  "text_extensions": [
+    ".py",
+    ".md",
+    ".txt",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".csv",
+    ".sh",
+    ".toml",
+    ".ini"
+  ],
+  "safety": {
+    "quarantine_days": 30,
+    "circuit_breaker": {
+      "max_ratio": 0.2,
+      "max_count": 50
+    }
+  },
+  "baseline": {
+    "authority": "desktop",
+    "file_name": "baseline.json.gz"
+  }
 }

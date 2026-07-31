@@ -423,9 +423,11 @@ class SyncWorker(QObject):
 
             self.log.emit(f"开始扫描远端: {remote_root}")
             self.progress.emit(0, 0, "正在扫描远端目录...")
+            mac_app_dir = r.get("mac_app_dir", "/Users/bing/MyGithub/DuetFlow")
             remote_mf = sftp.remote_scan(
                 self._ssh, remote_root, exclude, text_ext,
                 prev_manifest=baseline_for_cache,
+                mac_app_dir=mac_app_dir,
             )
 
             if self._is_cancelled():

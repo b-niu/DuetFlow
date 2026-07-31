@@ -225,9 +225,11 @@ def main():
     console.print("  连接成功")
 
     console.print("\n[bold blue]● 扫描 Mac 端文件...[/]")
+    mac_app_dir = resolved.get("mac_app_dir", "/Users/bing/MyGithub/DuetFlow")
     mac_manifest = sftp.remote_scan(
         ssh, mac_root, exclude, text_ext,
         prev_manifest=baseline_for_cache,
+        mac_app_dir=mac_app_dir,
     )
     console.print(f"  Mac 端: {len(mac_manifest)} 个文件")
 

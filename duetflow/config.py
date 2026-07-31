@@ -232,6 +232,7 @@ def load():
     is_win = sys.platform == "win32"
     win_root = cfg["sync_paths"]["windows_root"]
     mac_root = cfg["sync_paths"]["mac_root"]
+    mac_app_dir = cfg.get("mac_app_dir", "/Users/bing/MyGithub/DuetFlow")
 
     local_root = win_root if is_win else mac_root
     remote_root = mac_root if is_win else win_root
@@ -239,6 +240,7 @@ def load():
     cfg["_resolved"] = {
         "local_root": local_root,
         "remote_root": remote_root,
+        "mac_app_dir": mac_app_dir,
         "is_win": is_win,
         "local_ip": active_local_ip,
         "scanned_ips": scanned_ips,
