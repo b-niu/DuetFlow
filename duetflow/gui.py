@@ -1266,7 +1266,7 @@ class MainWindow(QWidget):
     # ── Execute ──────────────────────────────────────────────────────────────
 
     def _start_execute(self):
-        if not self._plan or not self._worker_obj:
+        if not self._plan:
             return
         active = [a for a in self._plan if a["action"] != "SKIP"]
         if not active:
@@ -1277,8 +1277,8 @@ class MainWindow(QWidget):
         self._append_log("─" * 45)
         self._append_log("确认无误，开始执行同步文件传输与隔离...")
 
-        worker = self._worker_obj
-        worker.approved_plan = active
+        worker = SyncWorker(self._cfg, do_execute=True, approved_plan=active)
+        self._worker_obj = worker
         thread = QThread()
         worker.moveToThread(thread)
         thread.started.connect(worker.execute_plan)
