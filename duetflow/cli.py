@@ -38,6 +38,8 @@ def load_baseline():
 
 def save_baseline(win_manifest, mac_manifest):
     """合并双端清单为新基线（以同步成功后的状态为准）"""
+    win_manifest = win_manifest or {}
+    mac_manifest = mac_manifest or {}
     merged = {}
     for path, entry in win_manifest.items():
         if not entry.get("status"):

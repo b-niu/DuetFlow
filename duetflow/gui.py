@@ -335,15 +335,16 @@ class SyncWorker(QObject):
     plan_ready = Signal(list)           # dry-run plan 完成
     done = Signal(bool, str)            # 完成 (success, message)
 
-    def __init__(self, cfg, do_execute=False, approved_plan=None):
+    def __init__(self, cfg, do_execute=False, approved_plan=None,
+                 win_manifest=None, mac_manifest=None):
         super().__init__()
         self.cfg = cfg
         self.do_execute = do_execute
         self.approved_plan = approved_plan
         self._ssh = None
         self._sftp = None
-        self._win_manifest = None
-        self._mac_manifest = None
+        self._win_manifest = win_manifest
+        self._mac_manifest = mac_manifest
         self._cancelled = False
 
     def stop(self):
@@ -1277,7 +1278,15 @@ class MainWindow(QWidget):
         self._append_log("─" * 45)
         self._append_log("确认无误，开始执行同步文件传输与隔离...")
 
-        worker = SyncWorker(self._cfg, do_execute=True, approved_plan=active)
+        # 从扫描阶段的工作线程中复用清单，否则 save_baseline 会因 manifest 为
+        # None 崩溃，导致 baseline 永远写不出去，每次都回到冷启动模式。
+        scan_worker = getattr(self, "_worker_obj", None)
+        win_manifest = scan_worker._win_manifest if scan_worker else None
+        mac_manifest = scan_worker._mac_manifest if scan_worker else None
+        worker = SyncWorker(
+            self._cfg, do_execute=True, approved_plan=active,
+            win_manifest=win_manifest, mac_manifest=mac_manifest,
+        )
         self._worker_obj = worker
         thread = QThread()
         worker.moveToThread(thread)
