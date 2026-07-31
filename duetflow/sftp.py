@@ -37,11 +37,12 @@ def remote_scan(ssh, mac_root, exclude_patterns, text_extensions):
     scanner_src = script_path.read_text(encoding="utf-8")
 
     call_code = f"""
-import json, sys
+import json, sys, os
 sys.stdout.reconfigure(encoding='utf-8')
 exclude = {json.dumps(exclude_patterns)}
 text_ext = {json.dumps(text_extensions)}
-result = scan({json.dumps(mac_root)}, exclude, text_ext)
+mac_root = os.path.expanduser({json.dumps(mac_root)})
+result = scan(mac_root, exclude, text_ext)
 print(json.dumps(result))
 """
     full_script = scanner_src + "\n" + textwrap.dedent(call_code)
