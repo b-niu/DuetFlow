@@ -1,4 +1,4 @@
-"""读取 config.json5，缺失则自动迁移旧 config.yaml 或从 config.example.json5 复制。
+"""读取与保存配置 (config.json5)。
 
 配置体系（文件分工）:
   - config.json5      — 人类编辑的配置（JSON5 格式，支持注释）
@@ -14,7 +14,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config.json5"
 EXAMPLE_PATH = ROOT / "config.example.json5"
-OLD_YAML_PATH = ROOT / "config.yaml"
 STATE_PATH = ROOT / "state.json"
 CONNECTIONS_PATH = ROOT / "connections.json"
 
@@ -170,62 +169,6 @@ def save_connections(connections: list, last_index: int = 0):
         print(f"[DuetFlow] 保存 connections 失败: {e}")
 
 
-# ─── 主配置加载 ───────────────────────────────────────────────────────────────
-
-
-def _migrate_from_yaml():
-    """将旧 config.yaml 迁移为 config.json5 + connections.json + state.json。"""
-    import yaml
-
-    with open(OLD_YAML_PATH, encoding="utf-8") as f:
-        old = yaml.safe_load(f)
-
-    # 提取 SSH 连接 → connections.json
-    ssh = old.get("ssh", {})
-    host = ssh.get("host", "")
-    port = ssh.get("port", 22)
-    user = ssh.get("user", "")
-    key_path = ssh.get("key_path", "")
-
-    connections = []
-    if host:
-        connections.append({
-            "host": host,
-            "port": port,
-            "user": user,
-            "key_path": key_path,
-        })
-    # 旧 host_history 也转为连接
-    for h in old.get("host_history", []):
-        if h and h != host and not any(c["host"] == h for c in connections):
-            connections.append({"host": h, "port": port, "user": user, "key_path": key_path})
-
-    if connections:
-        save_connections(connections, 0)
-
-    # 写入 config.json5（标准 JSON 即是合法 JSON5，且 json.dump 支持缩进）
-    import json
-    new_cfg = {
-        "sync_paths": old.get("sync_paths", {}),
-        "exclude": old.get("exclude", []),
-        "text_extensions": old.get("text_extensions", []),
-        "safety": old.get("safety", {}),
-        "baseline": old.get("baseline", {}),
-    }
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(new_cfg, f, indent=2)
-
-    # 写入 local_ip → state.json
-    local_ip = old.get("local_ip", "")
-    if local_ip:
-        save_local_ip(local_ip)
-
-    print(f"[DuetFlow] 已从 {OLD_YAML_PATH.name} 迁移到 {CONFIG_PATH.name} + connections.json + state.json")
-
-    # 重命名旧 yaml 以防混淆
-    OLD_YAML_PATH.rename(OLD_YAML_PATH.with_suffix(".yaml.bak"))
-
-
 def save_sync_paths(win_root: str, mac_root: str):
     """保存同步路径到 config.json5。"""
     import pyjson5
@@ -244,21 +187,20 @@ def save_sync_paths(win_root: str, mac_root: str):
         print(f"[DuetFlow] 保存 sync_paths 失败: {e}")
 
 
+# ─── 主配置加载 ───────────────────────────────────────────────────────────────
+
+
 def load():
     """加载配置。
 
     优先级:
       1. config.json5 (JSON5 格式，支持注释)
-      2. 如不存在，尝试从 config.yaml 迁移
-      3. 如 yaml 也不存在，从 config.example.json5 复制
+      2. 如不存在，从 config.example.json5 复制
 
     返回: dict，含 _resolved 计算字段
     """
     if not CONFIG_PATH.exists():
-        if OLD_YAML_PATH.exists():
-            # 一步迁移旧的 yaml 配置
-            _migrate_from_yaml()
-        elif EXAMPLE_PATH.exists():
+        if EXAMPLE_PATH.exists():
             shutil.copy(EXAMPLE_PATH, CONFIG_PATH)
             print(f"[DuetFlow] 配置文件已生成: {CONFIG_PATH}")
             print("[DuetFlow] 请编辑 config.json5 后重新运行。")
