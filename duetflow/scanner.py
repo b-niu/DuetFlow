@@ -9,11 +9,16 @@
   3. ThreadPoolExecutor 并发计算 hash — 充分利用多核 + SSD 并发能力
 """
 
+import hashlib
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path, PurePosixPath
 
-import xxhash
+try:
+    import xxhash
+    _HAS_XXHASH = True
+except ImportError:
+    _HAS_XXHASH = False
 
 WIN_ILLEGAL = set('\\:*?"<>|')
 
@@ -45,7 +50,7 @@ def _is_excluded(rel_path, exclude_patterns):
 
 
 def _file_hash(filepath, is_text, size=None):
-    """计算文件的 xxHash64 指纹。
+    """计算文件的哈希指纹（优先使用 xxhash，缺少依赖时自动降级到 hashlib.blake2b）。
 
     文本文件与二进制文件均只读前 HASH_PREFIX 字节：
       - 文本文件：对前缀做 CRLF → LF 归一化，保证 Windows/macOS 跨平台哈希一致；
@@ -55,7 +60,7 @@ def _file_hash(filepath, is_text, size=None):
     with open(filepath, "rb") as f:
         data = f.read(HASH_PREFIX)
 
-    h = xxhash.xxh64()
+    h = xxhash.xxh64() if _HAS_XXHASH else hashlib.blake2b(digest_size=8)
     if is_text:
         h.update(data.replace(b"\r\n", b"\n"))
     else:

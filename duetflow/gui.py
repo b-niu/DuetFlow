@@ -401,7 +401,20 @@ class SyncWorker(QObject):
 
             self.log.emit(f"正在连接 SSH 主机 {r['host']}:{r['port']} ...")
             self.progress.emit(0, 0, "连接 SSH 主机...")
-            self._ssh, self._sftp = sftp.connect(r)
+            try:
+                self._ssh, self._sftp = sftp.connect(r)
+            except Exception as conn_err:
+                err_msg = str(conn_err)
+                if "timed out" in err_msg or "10060" in err_msg:
+                    hint = f"❌ 连接超时: 无法连接到 {r['host']}:{r['port']}\n请检查:\n 1. Mac 端 IP 是否已变动\n 2. Mac 端是否已开启'远程登录'(SSH)\n 3. 两端是否处于同一局域网"
+                elif "Connection refused" in err_msg or "10061" in err_msg:
+                    hint = f"❌ 连接被拒绝: {r['host']}:{r['port']}\n目标主机未开启 SSH 服务。"
+                else:
+                    hint = f"❌ 连接失败: {err_msg}"
+                self.log.emit(hint)
+                self.done.emit(False, hint)
+                return
+
             self.log.emit("✓ SSH 连接成功")
 
             if self._is_cancelled():
