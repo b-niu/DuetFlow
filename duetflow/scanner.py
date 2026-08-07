@@ -30,8 +30,16 @@ HASH_PREFIX = 1 << 20  # 1 MiB
 
 
 def _is_hidden_entry(name):
-    """以 "." 开头的目录/文件视为隐藏项，默认忽略（如 .git/.workbuddy/.DS_Store）。"""
-    return name.startswith(".") and name not in (".", "..")
+    """以 "." 开头的目录/文件视为隐藏项，默认忽略（如 .git/.workbuddy/.DS_Store）。
+    另外过滤 "~$" 开头的 Office 临时锁文件（如 ~$报告.docx），
+    这类文件在 Windows 上以隐藏+系统属性存在，在 Mac 上通常不存在，
+    若不过滤会导致每次同步都错误触发 WIN_TO_MAC。
+    """
+    if name.startswith(".") and name not in (".", ".."):
+        return True
+    if name.startswith("~$"):
+        return True
+    return False
 
 
 def _is_excluded(rel_path, exclude_patterns):

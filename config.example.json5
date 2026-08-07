@@ -16,7 +16,9 @@
     "**/.env",
     "**/.DS_Store",
     "**/._*",
-    "**/Thumbs.db"
+    "**/Thumbs.db",
+    "~$*",
+    "**/~$*"
   ],
   "text_extensions": [
     ".py",

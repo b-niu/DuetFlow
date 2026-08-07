@@ -15,6 +15,7 @@ from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -529,6 +530,8 @@ class SyncWorker(QObject):
 
                 action = item["action"]
                 path = item["path"]
+                if action == "SKIP":
+                    continue
                 step_num = idx + 1
                 msg = f"({step_num}/{total}) {action} -> {path}"
                 self.log.emit(f"[{step_num}/{total}] {action}: {path}")
@@ -573,7 +576,7 @@ class SyncWorker(QObject):
             # 优先保存 baseline（单独 try，避免被后续清理步骤异常连累而丢失历史记录）
             try:
                 from duetflow.cli import save_baseline
-                save_baseline(self._win_manifest, self._mac_manifest)
+                save_baseline(self._win_manifest, self._mac_manifest, self.approved_plan)
             except Exception as e:
                 self.log.emit(f"⚠ 保存 baseline 快照失败: {e}")
             try:
@@ -592,6 +595,153 @@ class SyncWorker(QObject):
                     self._ssh.close()
                 except Exception:
                     pass
+
+
+# ─── 删除与误删人工审核对话框 ───────────────────────────────────────────────
+
+class DeletionReviewDialog(QDialog):
+    """删除与误删人工审核对话框。"""
+
+    def __init__(self, quarantine_items, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("🗑 文件删除审核 — 人工确认")
+        self.resize(1000, 560)
+        self._quarantine_items = quarantine_items
+        self._combos = []  # list of (item_dict, QComboBox)
+        self.resolved_plan_updates = {}  # {path: updated_item_dict}
+
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(14)
+
+        # 头部提示
+        tip_lbl = QLabel(
+            "<b>检测到以下文件在对端已不存在：</b><br>"
+            "<font color='#64748b'>这可能是对端主动删除了文件，也可能是程序或人工误删。请逐项确认处置方式：</font>"
+        )
+        tip_lbl.setWordWrap(True)
+        layout.addWidget(tip_lbl)
+
+        # 批量快捷控制按钮行
+        btn_bar = QHBoxLayout()
+        btn_bar.setSpacing(8)
+
+        all_quarantine_btn = QPushButton("一键全部隔离/删除")
+        all_quarantine_btn.setObjectName("flat")
+        all_quarantine_btn.clicked.connect(lambda: self._set_all_combo_index(0))
+        btn_bar.addWidget(all_quarantine_btn)
+
+        all_restore_btn = QPushButton("一键全部误删恢复")
+        all_restore_btn.setObjectName("flat")
+        all_restore_btn.clicked.connect(lambda: self._set_all_combo_index(1))
+        btn_bar.addWidget(all_restore_btn)
+
+        all_skip_btn = QPushButton("一键全部暂不处理")
+        all_skip_btn.setObjectName("flat")
+        all_skip_btn.clicked.connect(lambda: self._set_all_combo_index(2))
+        btn_bar.addWidget(all_skip_btn)
+
+        btn_bar.addStretch()
+        layout.addLayout(btn_bar)
+
+        # 表格
+        self._table = QTableWidget(len(self._quarantine_items), 3)
+        self._table.setHorizontalHeaderLabels(["相对文件路径", "状态来源", "处理动作"])
+        self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        self._table.setColumnWidth(2, 200)  # 处理动作下拉框列宽足够显示
+        self._table.verticalHeader().setVisible(False)
+        self._table.setAlternatingRowColors(True)
+        # 删除审核事关文件安全，路径必须完整可读：允许单元格换行并随内容撑高，
+        # 悬停时显示完整路径。
+        self._table.setWordWrap(True)
+        self._table.verticalHeader().setDefaultSectionSize(28)
+        self._table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+
+        for row, item in enumerate(self._quarantine_items):
+            path = item["path"]
+            action = item["action"]
+
+            path_item = QTableWidgetItem(path)
+            path_item.setToolTip(path)
+            path_item.setData(Qt.UserRole, path)
+            self._table.setItem(row, 0, path_item)
+
+            if action == "QUARANTINE_WIN":
+                src_text = "Mac 端已删除"
+            else:
+                src_text = "Windows 端已删除"
+            src_item = QTableWidgetItem(src_text)
+            src_item.setForeground(QColor(WARNING_YELLOW))
+            self._table.setItem(row, 1, src_item)
+
+            cb = QComboBox()
+            cb.addItem("🗑 同步隔离 (确认删除)", "QUARANTINE")
+            cb.addItem("🔄 误删恢复 (补回对端)", "RESTORE")
+            cb.addItem("⏸ 暂不处理 (跳过)", "SKIP")
+            cb.setCurrentIndex(0)  # 默认隔离
+            # 处理动作下拉框必须清晰可读：给足宽度并单独设置样式，
+            # 避免被表格单元格样式/列宽压成"进度条"。
+            cb.setMinimumWidth(180)
+            cb.setStyleSheet(
+                "QComboBox { background-color: #f8fafc; border: 1px solid #e2e8f0;"
+                " border-radius: 6px; padding: 5px 8px; font-size: 12px; color: #0f172a; }"
+                "QComboBox::drop-down { border: none; width: 22px; }"
+            )
+
+            self._combos.append((item, cb))
+            self._table.setCellWidget(row, 2, cb)
+
+        layout.addWidget(self._table, 1)
+
+        # 底部确定/取消按钮
+        bottom_bar = QHBoxLayout()
+        bottom_bar.addStretch()
+
+        cancel_btn = QPushButton("取消同步")
+        cancel_btn.setObjectName("flat")
+        cancel_btn.clicked.connect(self.reject)
+        bottom_bar.addWidget(cancel_btn)
+
+        confirm_btn = QPushButton("确认并开始执行")
+        confirm_btn.setObjectName("success")
+        confirm_btn.clicked.connect(self._on_confirm)
+        bottom_bar.addWidget(confirm_btn)
+
+        layout.addLayout(bottom_bar)
+
+    def _set_all_combo_index(self, index):
+        for _, cb in self._combos:
+            cb.setCurrentIndex(index)
+
+    def _on_confirm(self):
+        self.resolved_plan_updates = {}
+        for item, cb in self._combos:
+            opt = cb.currentData()
+            orig_action = item["action"]
+            path = item["path"]
+
+            if opt == "QUARANTINE":
+                self.resolved_plan_updates[path] = dict(item)
+            elif opt == "RESTORE":
+                if orig_action == "QUARANTINE_WIN":
+                    new_action = "WIN_TO_MAC"
+                else:
+                    new_action = "MAC_TO_WIN"
+                new_item = dict(item)
+                new_item["action"] = new_action
+                self.resolved_plan_updates[path] = new_item
+            elif opt == "SKIP":
+                new_item = dict(item)
+                new_item["action"] = "SKIP"
+                new_item["reason"] = "user_skipped_quarantine"
+                self.resolved_plan_updates[path] = new_item
+
+        self.accept()
 
 
 # ─── 主窗口 ──────────────────────────────────────────────────────────────────
@@ -755,6 +905,12 @@ class MainWindow(QWidget):
         self._add_tab_btn.setFixedHeight(30)
         self._add_tab_btn.clicked.connect(self._add_new_tab)
         bar_row.addWidget(self._add_tab_btn)
+
+        self._save_tab_btn = QPushButton("保存连接")
+        self._save_tab_btn.setObjectName("flat")
+        self._save_tab_btn.setFixedHeight(30)
+        self._save_tab_btn.clicked.connect(self._save_current_conn)
+        bar_row.addWidget(self._save_tab_btn)
 
         self._del_tab_btn = QPushButton("删除当前连接")
         self._del_tab_btn.setObjectName("flat")
@@ -959,7 +1115,30 @@ class MainWindow(QWidget):
         self._host_edit.setFocus()
         self._host_edit.selectAll()
 
+        # 新增的空连接不立即落盘，等用户填写后点"保存连接"再持久化，
+        # 避免空的脏连接被保存下来并被误选。
+
+    def _save_current_conn(self):
+        """将当前输入卡片的内容保存到当前连接记录并持久化。"""
+        if self._current_idx < 0 or self._current_idx >= len(self._connections):
+            QMessageBox.information(self, "提示", "请先新增一个连接")
+            return
+        host = self._host_edit.text().strip()
+        if not host:
+            QMessageBox.warning(self, "提示", "请先填写 Host 地址再保存")
+            return
+        conn = self._connections[self._current_idx]
+        conn["host"] = host
+        conn["port"] = self._port_number()
+        conn["user"] = self._user_edit.text().strip()
+        conn["key_path"] = self._key_edit.text().strip()
+        # 同步更新下拉框显示名
+        self._tab_updating = True
+        self._conn_combo.setItemText(self._current_idx, host)
+        self._tab_updating = False
         self._save_connections_to_disk()
+        self._update_resolved_from_fields()
+        self._append_log(f"连接配置已保存: {host}")
 
     def _delete_current_tab(self):
         """删除当前选中的连接配置。"""
@@ -1115,6 +1294,17 @@ class MainWindow(QWidget):
             # 加载连接历史
             connections, last_idx = cfg_mod.load_connections()
 
+            # 过滤掉"空壳连接"（host 为空，未真正填写的记录），避免误选到空连接
+            # 而用空 host 去连接（导致 WinError 10013）。
+            if connections:
+                filtered = [c for c in connections if (c.get("host") or "").strip()]
+                if len(filtered) != len(connections):
+                    connections = filtered
+                    if last_idx >= len(connections):
+                        last_idx = max(0, len(connections) - 1)
+                    if connections:
+                        cfg_mod.save_connections(connections, last_idx)
+
             # 如果没有历史连接，从旧配置创建一个
             if not connections:
                 old_host = self._cfg.get("ssh", {}).get("host", "")
@@ -1228,6 +1418,16 @@ class MainWindow(QWidget):
         if not self._cfg:
             return
         self._update_resolved_from_fields()
+        r = self._cfg["_resolved"]
+
+        # 扫描前校验连接参数，避免用空 host 去连 SSH（会触发 WinError 10013）
+        if not r.get("host"):
+            QMessageBox.warning(self, "提示", "请先填写远端主机 Host 地址（或选择一个已保存的连接）")
+            return
+        if not r.get("user"):
+            QMessageBox.warning(self, "提示", "请先填写远端 SSH 用户名")
+            return
+
         self._set_busy(True)
         self._table.setRowCount(0)
         self._plan = None
@@ -1290,10 +1490,57 @@ class MainWindow(QWidget):
     # ── Execute ──────────────────────────────────────────────────────────────
 
     def _start_execute(self):
+        try:
+            self._start_execute_inner()
+        except Exception:
+            import traceback as _tb
+            msg = _tb.format_exc()
+            self._append_log(f"[未预期错误]\n{msg}")
+            self._set_status("发生未预期错误", DANGER_RED)
+            self._set_busy(False)
+            QMessageBox.critical(self, "执行错误", msg)
+
+    def _start_execute_inner(self):
         if not self._plan:
             return
         active = [a for a in self._plan if a["action"] != "SKIP"]
         if not active:
+            return
+
+        # 检查是否存在待隔离/删除条目，如存在则先弹出人工审核窗口
+        quarantine_items = [a for a in active if a["action"] in ("QUARANTINE_WIN", "QUARANTINE_MAC")]
+        if quarantine_items:
+            dialog = DeletionReviewDialog(quarantine_items, parent=self)
+            if dialog.exec() == QDialog.Accepted:
+                updates = dialog.resolved_plan_updates
+                updated_active = []
+                for item in active:
+                    p = item["path"]
+                    if p in updates:
+                        updated_active.append(updates[p])
+                    else:
+                        updated_active.append(item)
+                active = updated_active
+            else:
+                self._append_log("用户取消了文件删除审核，同步中断。")
+                return
+
+        # 过滤可能全部变为了 SKIP 的情况
+        active_to_run = [a for a in active if a["action"] != "SKIP"]
+        if not active_to_run:
+            self._append_log("所有隔离/删除操作已被选择跳过，无其他待执行变动。")
+            self._set_status("变动已全被跳过", WARNING_YELLOW)
+            skipped_quarantines = [a for a in active if a.get("reason") == "user_skipped_quarantine"]
+            if skipped_quarantines:
+                scan_worker = getattr(self, "_worker_obj", None)
+                win_manifest = scan_worker._win_manifest if scan_worker else None
+                mac_manifest = scan_worker._mac_manifest if scan_worker else None
+                try:
+                    from duetflow.cli import save_baseline
+                    save_baseline(win_manifest, mac_manifest, active)
+                    self._append_log("✓ Baseline 已更新（从基线中清除了已选择跳过的删除条目）")
+                except Exception as e:
+                    self._append_log(f"⚠ 保存 baseline 失败: {e}")
             return
 
         self._set_busy(True)
@@ -1378,6 +1625,28 @@ class MainWindow(QWidget):
 # ─── 入口 ─────────────────────────────────────────────────────────────────────
 
 def main():
+    # ── 全局异常钩子：把崩溃信息写到 crash.log 并弹框 ──────────────────────
+    import traceback as _tb
+
+    _crash_log = ROOT / "crash.log"
+
+    def _excepthook(exc_type, exc_value, exc_tb):
+        text = "".join(_tb.format_exception(exc_type, exc_value, exc_tb))
+        try:
+            with open(_crash_log, "a", encoding="utf-8") as f:
+                from datetime import datetime as _dt
+                f.write(f"\n{'='*60}\n{_dt.now().isoformat()}\n{text}\n")
+        except Exception:
+            pass
+        # 如果 QApplication 还活着，弹框
+        try:
+            QMessageBox.critical(None, "DuetFlow 未捕获异常", text)
+        except Exception:
+            pass
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = _excepthook
+
     app = QApplication(sys.argv)
     app.setApplicationName("DuetFlow")
 

@@ -36,17 +36,40 @@ def load_baseline():
     return data.get("files", {})
 
 
-def save_baseline(win_manifest, mac_manifest):
+def save_baseline(win_manifest, mac_manifest, executed_plan=None):
     """合并双端清单为新基线（以同步成功后的状态为准）"""
     win_manifest = win_manifest or {}
     mac_manifest = mac_manifest or {}
     merged = {}
+
     for path, entry in win_manifest.items():
         if not entry.get("status"):
             merged[path] = entry
     for path, entry in mac_manifest.items():
         if not entry.get("status") and path not in merged:
             merged[path] = entry
+
+    if executed_plan:
+        for item in executed_plan:
+            action = item.get("action")
+            path = item.get("path")
+            if not path:
+                continue
+
+            if action in ("QUARANTINE_WIN", "QUARANTINE_MAC"):
+                # 已移入隔离区，基线中彻底剔除
+                merged.pop(path, None)
+            elif action == "WIN_TO_MAC":
+                if path in win_manifest and not win_manifest[path].get("status"):
+                    merged[path] = win_manifest[path]
+            elif action == "MAC_TO_WIN":
+                if path in mac_manifest and not mac_manifest[path].get("status"):
+                    merged[path] = mac_manifest[path]
+            elif action == "SKIP":
+                reason = item.get("reason", "")
+                if reason in ("both_deleted", "user_skipped_quarantine"):
+                    # 已双端删除或用户主动跳过隔离，从基线中剔除
+                    merged.pop(path, None)
 
     data = {
         "version": "2.0",
@@ -287,7 +310,7 @@ def main():
     execute(plan, cfg, ssh, sftp_client, win_root, mac_root)
 
     # 9. 保存 baseline
-    save_baseline(win_manifest, mac_manifest)
+    save_baseline(win_manifest, mac_manifest, plan)
     console.print(f"\n[green bold]✓ 同步完成！Baseline 已更新。[/]")
 
     # 10. 清理过期隔离文件
