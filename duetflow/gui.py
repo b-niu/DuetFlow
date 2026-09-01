@@ -1366,24 +1366,39 @@ class MainWindow(QWidget):
             QMessageBox.warning(self, "提示", "请先输入用户名")
             return
 
+        if getattr(self, "_conn_thread", None) is not None:
+            try:
+                if self._conn_thread.isRunning():
+                    return
+            except RuntimeError:
+                self._conn_thread = None
+
         self._conn_status_lbl.setText("检测中...")
         self._conn_status_lbl.setStyleSheet(f"color: {WARNING_YELLOW}; font-weight: bold;")
         self._test_conn_btn.setEnabled(False)
         self._conn_err_detail_lbl.setVisible(False)
 
-        self._conn_tester = ConnectionTester(r)
-        self._conn_thread = QThread()
-        self._conn_tester.moveToThread(self._conn_thread)
-        self._conn_thread.started.connect(self._conn_tester.test_connection)
-        self._conn_tester.result.connect(self._on_conn_test_result)
-        self._conn_thread.start()
+        tester = ConnectionTester(r)
+        thread = QThread()
+        self._conn_thread = thread
+        tester.moveToThread(thread)
+        thread.started.connect(tester.test_connection)
+        tester.result.connect(self._on_conn_test_result)
+        
+        def _cleanup_conn():
+            self._conn_thread = None
+
+        thread.finished.connect(tester.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(_cleanup_conn)
+        thread.start()
 
     def _on_conn_test_result(self, ok, msg, rtt):
-        if hasattr(self, "_conn_thread") and self._conn_thread:
-            self._conn_thread.quit()
-            self._conn_thread.wait()
-            self._conn_thread = None
-        self._conn_tester = None
+        if getattr(self, "_conn_thread", None) is not None:
+            try:
+                self._conn_thread.quit()
+            except RuntimeError:
+                self._conn_thread = None
 
         self._test_conn_btn.setEnabled(True)
         if ok:
@@ -1414,6 +1429,16 @@ class MainWindow(QWidget):
 
     # ── Scan ─────────────────────────────────────────────────────────────────
 
+    def _is_thread_running(self):
+        t = getattr(self, "_thread", None)
+        if t is None:
+            return False
+        try:
+            return t.isRunning()
+        except RuntimeError:
+            self._thread = None
+            return False
+
     def _start_scan(self):
         if not self._cfg:
             return
@@ -1428,6 +1453,9 @@ class MainWindow(QWidget):
             QMessageBox.warning(self, "提示", "请先填写远端 SSH 用户名")
             return
 
+        if self._is_thread_running():
+            return
+
         self._set_busy(True)
         self._table.setRowCount(0)
         self._plan = None
@@ -1438,16 +1466,29 @@ class MainWindow(QWidget):
         worker_obj = SyncWorker(self._cfg)
         self._worker_obj = worker_obj
         thread = QThread()
+        self._thread = thread
         worker_obj.moveToThread(thread)
         thread.started.connect(worker_obj.scan_and_plan)
         worker_obj.log.connect(self._append_log)
         worker_obj.progress.connect(self._on_progress_update)
         worker_obj.plan_ready.connect(self._on_plan_ready)
-        worker_obj.done.connect(lambda ok, msg: self._on_done(ok, msg, thread))
+        worker_obj.done.connect(lambda ok, msg, t=thread, w=worker_obj: self._on_done(ok, msg, t, w))
+        
+        def _on_finished():
+            if self._thread is thread:
+                self._thread = None
+
+        thread.finished.connect(worker_obj.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(_on_finished)
         thread.start()
-        self._thread = thread
 
     def _on_plan_ready(self, plan):
+        if self._is_thread_running():
+            try:
+                self._thread.quit()
+            except RuntimeError:
+                self._thread = None
         self._plan = plan
         active = [a for a in plan if a["action"] != "SKIP"]
         self._fill_table(active)
@@ -1543,6 +1584,13 @@ class MainWindow(QWidget):
                     self._append_log(f"⚠ 保存 baseline 失败: {e}")
             return
 
+        if self._is_thread_running():
+            try:
+                self._thread.quit()
+                self._thread.wait(1000)
+            except RuntimeError:
+                self._thread = None
+
         self._set_busy(True)
         self._exec_btn.setEnabled(False)
         self._append_log("─" * 45)
@@ -1560,13 +1608,21 @@ class MainWindow(QWidget):
         )
         self._worker_obj = worker
         thread = QThread()
+        self._thread = thread
         worker.moveToThread(thread)
         thread.started.connect(worker.execute_plan)
         worker.log.connect(self._append_log)
         worker.progress.connect(self._on_progress_update)
-        worker.done.connect(lambda ok, msg: self._on_done(ok, msg, thread))
+        worker.done.connect(lambda ok, msg, t=thread, w=worker: self._on_done(ok, msg, t, w))
+        
+        def _on_finished():
+            if self._thread is thread:
+                self._thread = None
+
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(_on_finished)
         thread.start()
-        self._thread = thread
 
     def _stop_task(self):
         if self._worker_obj:
@@ -1583,9 +1639,12 @@ class MainWindow(QWidget):
             self._progress_bar.setRange(0, total)
             self._progress_bar.setValue(current)
 
-    def _on_done(self, ok, msg, thread):
-        thread.quit()
-        thread.wait()
+    def _on_done(self, ok, msg, thread, worker=None):
+        try:
+            if thread and thread.isRunning():
+                thread.quit()
+        except RuntimeError:
+            pass
         self._set_busy(False)
         if ok:
             self._set_status("同步完成", SUCCESS_GREEN)
