@@ -1379,6 +1379,7 @@ class MainWindow(QWidget):
         self._conn_err_detail_lbl.setVisible(False)
 
         tester = ConnectionTester(r)
+        self._conn_tester = tester
         thread = QThread()
         self._conn_thread = thread
         tester.moveToThread(thread)
@@ -1387,6 +1388,7 @@ class MainWindow(QWidget):
         
         def _cleanup_conn():
             self._conn_thread = None
+            self._conn_tester = None
 
         thread.finished.connect(tester.deleteLater)
         thread.finished.connect(thread.deleteLater)
@@ -1399,6 +1401,7 @@ class MainWindow(QWidget):
                 self._conn_thread.quit()
             except RuntimeError:
                 self._conn_thread = None
+        self._conn_tester = None
 
         self._test_conn_btn.setEnabled(True)
         if ok:
