@@ -312,10 +312,11 @@ class ConnectionTester(QObject):
 
     def test_connection(self):
         start = time.time()
+        ssh = None
+        sftp_client = None
         try:
-            ssh, sftp_client = sftp.connect(self.r)
+            ssh, sftp_client = sftp.connect(self.r, timeout=5)
             rtt = (time.time() - start) * 1000
-            ssh.close()
             self.result.emit(True, "连接正常", rtt)
         except Exception as e:
             err_msg = str(e)
@@ -326,6 +327,17 @@ class ConnectionTester(QObject):
             elif "timed out" in err_msg or "10060" in err_msg:
                 err_msg = "连接超时 (目标 IP 不可达或网络防火墙阻挡)"
             self.result.emit(False, err_msg, 0.0)
+        finally:
+            if sftp_client:
+                try:
+                    sftp_client.close()
+                except Exception:
+                    pass
+            if ssh:
+                try:
+                    ssh.close()
+                except Exception:
+                    pass
 
 
 class SyncWorker(QObject):
@@ -425,7 +437,7 @@ class SyncWorker(QObject):
 
             self.log.emit(f"开始扫描远端: {remote_root}")
             self.progress.emit(0, 0, "正在扫描远端目录...")
-            mac_app_dir = r.get("mac_app_dir", "/Users/bing/MyGithub/DuetFlow")
+            mac_app_dir = r.get("mac_app_dir", "")
             remote_mf = sftp.remote_scan(
                 self._ssh, remote_root, exclude, text_ext,
                 prev_manifest=baseline_for_cache,
@@ -447,10 +459,7 @@ class SyncWorker(QObject):
             if len(remote_mf) == 0:
                 self.log.emit("⚠ 远端目录无任何文件！可能原因：远端目录不存在、路径含 ~ 未展开、或扫描脚本出错")
 
-            baseline = baseline_for_cache  # 直接复用已加载的快照
-            if not baseline:
-                self.log.emit("未找到历史 baseline 快照，进入冷启动并集模式")
-                baseline = {}
+            baseline = baseline_for_cache or {}
 
             self.log.emit("正在进行三路合并计算...")
             if r["is_win"]:
@@ -495,14 +504,19 @@ class SyncWorker(QObject):
         except Exception:
             self.done.emit(False, traceback.format_exc())
         finally:
-            # 扫描完成后立即释放 SSH 连接，避免连接泄漏；执行阶段会重新建立连接。
+            # 扫描完成后立即释放 SFTP 和 SSH 连接，避免连接泄漏；执行阶段会重新建立连接。
+            if self._sftp:
+                try:
+                    self._sftp.close()
+                except Exception:
+                    pass
+                self._sftp = None
             if self._ssh:
                 try:
                     self._ssh.close()
                 except Exception:
                     pass
                 self._ssh = None
-                self._sftp = None
 
     def execute_plan(self):
         try:
@@ -590,11 +604,18 @@ class SyncWorker(QObject):
         except Exception:
             self.done.emit(False, traceback.format_exc())
         finally:
+            if self._sftp:
+                try:
+                    self._sftp.close()
+                except Exception:
+                    pass
+                self._sftp = None
             if self._ssh:
                 try:
                     self._ssh.close()
                 except Exception:
                     pass
+                self._ssh = None
 
 
 # ─── 删除与误删人工审核对话框 ───────────────────────────────────────────────
@@ -989,8 +1010,8 @@ class MainWindow(QWidget):
         row3.addWidget(self._test_conn_btn)
 
         self._conn_status_lbl = QLabel("未检测")
-        status_font = self._conn_status_lbl.font()
-        status_font.setPointSize(12)
+        status_font = QFont()
+        status_font.setPixelSize(12)
         status_font.setBold(True)
         self._conn_status_lbl.setFont(status_font)
         self._conn_status_lbl.setStyleSheet(f"color: {TEXT_SECONDARY};")
@@ -1487,12 +1508,11 @@ class MainWindow(QWidget):
         thread.start()
 
     def _on_plan_ready(self, plan):
-        if self._is_thread_running():
-            try:
-                self._thread.quit()
-            except RuntimeError:
-                self._thread = None
         self._plan = plan
+        # 保存清单至主窗口属性，避免扫描线程或 worker 销毁后无法访问
+        if getattr(self, "_worker_obj", None):
+            self._last_win_manifest = getattr(self._worker_obj, "_win_manifest", None)
+            self._last_mac_manifest = getattr(self._worker_obj, "_mac_manifest", None)
         active = [a for a in plan if a["action"] != "SKIP"]
         self._fill_table(active)
 
@@ -1522,8 +1542,8 @@ class MainWindow(QWidget):
 
             action_item = QTableWidgetItem(label)
             action_item.setForeground(QColor(color))
-            item_font = action_item.font()
-            item_font.setPointSize(13)
+            item_font = QFont()
+            item_font.setPixelSize(13)
             item_font.setBold(True)
             action_item.setFont(item_font)
 
@@ -1602,9 +1622,13 @@ class MainWindow(QWidget):
         # 复用扫描阶段得到的清单（纯数据），但 SSH/SFTP 连接不跨线程复用——
         # paramiko 的 SFTP 连接非线程安全，跨线程使用可能导致进程崩溃退出。
         # 执行阶段会自行建立新连接。
-        scan_worker = getattr(self, "_worker_obj", None)
-        win_manifest = scan_worker._win_manifest if scan_worker else None
-        mac_manifest = scan_worker._mac_manifest if scan_worker else None
+        win_manifest = getattr(self, "_last_win_manifest", None)
+        mac_manifest = getattr(self, "_last_mac_manifest", None)
+        if win_manifest is None or mac_manifest is None:
+            scan_worker = getattr(self, "_worker_obj", None)
+            if scan_worker:
+                win_manifest = getattr(scan_worker, "_win_manifest", None)
+                mac_manifest = getattr(scan_worker, "_mac_manifest", None)
         worker = SyncWorker(
             self._cfg, do_execute=True, approved_plan=active,
             win_manifest=win_manifest, mac_manifest=mac_manifest,
@@ -1652,13 +1676,14 @@ class MainWindow(QWidget):
         if ok:
             self._set_status("同步完成", SUCCESS_GREEN)
             self._exec_btn.setEnabled(False)
+            self._append_log(msg)
         else:
             if "取消" in msg:
                 self._set_status("任务已取消", WARNING_YELLOW)
+                self._append_log(msg)
             else:
                 self._set_status("发生错误", DANGER_RED)
                 self._append_log(f"[错误提示]\n{msg}")
-        self._append_log(msg)
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -1682,6 +1707,18 @@ class MainWindow(QWidget):
         else:
             self._progress_bar.hide()
             self._stop_btn.hide()
+
+    def closeEvent(self, event):
+        # 确保后台测试线程与同步线程优雅终止，避免 Qt 因线程未退出而直接闪退
+        if getattr(self, "_worker_obj", None):
+            self._worker_obj.stop()
+        if getattr(self, "_thread", None) and self._thread.isRunning():
+            self._thread.quit()
+            self._thread.wait(1000)
+        if getattr(self, "_conn_thread", None) and self._conn_thread.isRunning():
+            self._conn_thread.quit()
+            self._conn_thread.wait(1000)
+        event.accept()
 
 
 # ─── 入口 ─────────────────────────────────────────────────────────────────────

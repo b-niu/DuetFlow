@@ -28,11 +28,13 @@ def generate_icons(source_image_path: Path):
     print(f"[Info] 正在从 {source_image_path.name} 生成双端图标...")
 
     img = Image.open(source_image_path)
+    clean_img = Image.new("RGBA", img.size)
+    clean_img.paste(img, (0, 0))
 
-    # 1. 生成 Windows .ico 图标
+    # 1. 生成 Windows .ico 图标（剥离可能引起 libpng 报错的非标 iCCP 元数据）
     ico_path = ASSETS_DIR / "icon.ico"
     icon_sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
-    img.save(ico_path, format="ICO", sizes=icon_sizes)
+    clean_img.save(ico_path, format="ICO", sizes=icon_sizes)
     print(f"[Success] 已生成 Windows 图标: {ico_path}")
 
     # 2. 生成 macOS .icns 图标

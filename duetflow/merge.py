@@ -56,12 +56,11 @@ def three_way_merge(win_manifest, mac_manifest, baseline):
             elif mac_exists and not win_exists:
                 plan.append({"action": "MAC_TO_WIN", "path": path})
             elif win_exists and mac_exists:
-                # 两端都有，取 mtime 较新的
-                if win["mtime"] >= mac["mtime"]:
-                    if win.get("hash") != mac.get("hash"):
-                        plan.append({"action": "WIN_TO_MAC", "path": path})
-                    else:
-                        plan.append({"action": "SKIP", "path": path, "reason": "same"})
+                # 两端都有：若内容哈希一致，直接跳过；若不同，以修改时间较新者为准
+                if win.get("hash") and mac.get("hash") and win["hash"] == mac["hash"]:
+                    plan.append({"action": "SKIP", "path": path, "reason": "same"})
+                elif win["mtime"] >= mac["mtime"]:
+                    plan.append({"action": "WIN_TO_MAC", "path": path})
                 else:
                     plan.append({"action": "MAC_TO_WIN", "path": path})
             continue

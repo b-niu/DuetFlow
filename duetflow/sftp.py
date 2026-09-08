@@ -1,40 +1,79 @@
 """SFTP 传输层。封装 paramiko 的连接、上传、下载、远端隔离、远端扫描。"""
 
 import base64
+import concurrent.futures
 import gzip
 import json
+import socket
 import stat as _stat
 from pathlib import Path, PurePosixPath
 
 import paramiko
 
 
-def connect(resolved):
-    """建立 SSH 连接，返回 (ssh_client, sftp_client)"""
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    connect_kwargs = {
-        "hostname": resolved["host"],
-        "port": resolved["port"],
-        "username": resolved["user"],
-        "timeout": 8,           # TCP 连接超时
-        "banner_timeout": 8,    # SSH banner 协商超时
-        "auth_timeout": 8,      # 认证超时
-    }
-    if resolved.get("key_path"):
-        connect_kwargs["key_filename"] = str(Path(resolved["key_path"]).expanduser())
-    ssh.connect(**connect_kwargs)
-    sftp = ssh.open_sftp()
-    return ssh, sftp
+def connect(resolved, timeout=8):
+    """建立 SSH 连接，返回 (ssh_client, sftp_client)。
+
+    采用 TCP 探针预检 + 线程池硬超时机制，防止 SSH 握手或认证挂起导致程序假死或退出闪退。
+    """
+    host = resolved["host"]
+    port = int(resolved.get("port", 22))
+
+    # 1. 快速 TCP 探针预检（超时 3 秒），若目标端口不可达直接报错，避免 paramiko 内部长等待
+    tcp_timeout = min(timeout, 3)
+    try:
+        with socket.create_connection((host, port), timeout=tcp_timeout):
+            pass
+    except socket.timeout:
+        raise TimeoutError(f"连接超时 (目标 IP {host}:{port} 不可达或防火墙阻挡)")
+    except ConnectionRefusedError:
+        raise ConnectionRefusedError(f"连接被拒绝 (目标主机 {host}:{port} 未开启 SSH 服务)")
+    except Exception as e:
+        raise OSError(f"无法连接到 {host}:{port}: {e}")
+
+    # 2. 在线程池中执行 paramiko 连接，施加硬超时保护与连接异常自动清理
+    def _do_connect():
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        connect_kwargs = {
+            "hostname": host,
+            "port": port,
+            "username": resolved["user"],
+            "timeout": timeout,
+            "banner_timeout": timeout,
+            "auth_timeout": timeout,
+        }
+        if resolved.get("key_path"):
+            connect_kwargs["key_filename"] = str(Path(resolved["key_path"]).expanduser())
+        try:
+            ssh.connect(**connect_kwargs)
+            sftp = ssh.open_sftp()
+            return ssh, sftp
+        except Exception:
+            ssh.close()
+            raise
+
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(_do_connect)
+    try:
+        return future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise TimeoutError(f"SSH 握手或认证超时 (超过 {timeout} 秒未响应)")
+    finally:
+        executor.shutdown(wait=False)
 
 
-def remote_scan(ssh, mac_root, exclude_patterns, text_extensions, prev_manifest=None, mac_app_dir="/Users/bing/MyGithub/DuetFlow"):
+def remote_scan(ssh, mac_root, exclude_patterns, text_extensions, prev_manifest=None, mac_app_dir=""):
     """在 Mac 端直接运行其部署的 DuetFlow 扫描模块并返回 manifest dict。
 
     通过 SSH 在 mac_app_dir 目录下直接执行：
       uv run python -m duetflow.cli_scan
     并通过 stdin 传入控制 JSON。
     """
+    if not mac_app_dir:
+        mac_app_dir = "/Users/username/MyGithub/DuetFlow"
+
     prev_b64 = ""
     if prev_manifest:
         gz_bytes = gzip.compress(
@@ -70,8 +109,12 @@ def remote_scan(ssh, mac_root, exclude_patterns, text_extensions, prev_manifest=
 
     out = stdout.read().decode("utf-8").strip()
     err = stderr.read().decode("utf-8").strip()
+    exit_status = stdout.channel.recv_exit_status()
+
     if err:
         print(f"[remote_scan stderr]\n{err}")
+    if exit_status != 0:
+        raise RuntimeError(f"远端扫描执行失败 (exit code {exit_status}):\n{err or out}")
     if not out:
         return {}
     return json.loads(out)

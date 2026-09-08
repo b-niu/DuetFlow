@@ -170,19 +170,39 @@ def save_connections(connections: list, last_index: int = 0):
 
 
 def save_sync_paths(win_root: str, mac_root: str):
-    """保存同步路径到 config.json5。"""
-    import pyjson5
+    """保存同步路径到 config.json5，采用正则替换保留文件原有注释。"""
     if not CONFIG_PATH.exists():
         return
+    import re
     try:
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            cfg = pyjson5.load(f)
-        cfg.setdefault("sync_paths", {})
-        cfg["sync_paths"]["windows_root"] = win_root
-        cfg["sync_paths"]["mac_root"] = mac_root
-        import json
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2, ensure_ascii=False)
+        content = CONFIG_PATH.read_text(encoding="utf-8")
+        escaped_win = win_root.replace("\\", "/")
+        escaped_mac = mac_root.replace("\\", "/")
+
+        # 正则替换 windows_root 和 mac_root，保留原始注释与缩进
+        new_content, count1 = re.subn(
+            r'("windows_root"\s*:\s*)"[^"]*"',
+            f'\\1"{escaped_win}"',
+            content,
+        )
+        new_content, count2 = re.subn(
+            r'("mac_root"\s*:\s*)"[^"]*"',
+            f'\\1"{escaped_mac}"',
+            new_content,
+        )
+        if count1 > 0 and count2 > 0:
+            CONFIG_PATH.write_text(new_content, encoding="utf-8")
+        else:
+            # 若正则未能匹配（如特殊结构），则走解析回写兜底
+            import pyjson5
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                cfg = pyjson5.load(f)
+            cfg.setdefault("sync_paths", {})
+            cfg["sync_paths"]["windows_root"] = win_root
+            cfg["sync_paths"]["mac_root"] = mac_root
+            import json
+            with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"[DuetFlow] 保存 sync_paths 失败: {e}")
 
@@ -232,7 +252,7 @@ def load():
     is_win = sys.platform == "win32"
     win_root = cfg["sync_paths"]["windows_root"]
     mac_root = cfg["sync_paths"]["mac_root"]
-    mac_app_dir = cfg.get("mac_app_dir", "/Users/bing/MyGithub/DuetFlow")
+    mac_app_dir = cfg.get("mac_app_dir", "/Users/username/MyGithub/DuetFlow")
 
     local_root = win_root if is_win else mac_root
     remote_root = mac_root if is_win else win_root
