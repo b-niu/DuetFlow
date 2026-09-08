@@ -256,6 +256,21 @@ QScrollBar::handle:vertical:hover {{
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 
+QScrollBar:horizontal {{
+    background: transparent;
+    height: 8px;
+    margin: 0;
+}}
+QScrollBar::handle:horizontal {{
+    background: #cbd5e1;
+    border-radius: 4px;
+    min-width: 30px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background: #94a3b8;
+}}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
+
 QSplitter::handle {{
     background: {BORDER_COLOR};
     width: 1px;
@@ -345,6 +360,7 @@ class SyncWorker(QObject):
 
     log = Signal(str)                   # 普通日志行
     progress = Signal(int, int, str)    # 进度 (current, total, status_msg)
+    item_status = Signal(str, str)      # 单个文件执行状态 (rel_path, status: 'RUNNING'|'SUCCESS'|'FAILED')
     plan_ready = Signal(list)           # dry-run plan 完成
     done = Signal(bool, str)            # 完成 (success, message)
 
@@ -566,26 +582,32 @@ class SyncWorker(QObject):
                 local_full = Path(local_root) / path
                 remote_full = str(PurePosixPath(remote_root) / path)
 
-                if action == to_remote_action:
-                    sftp.upload(self._sftp, local_full, remote_full)
-                elif action == to_local_action:
-                    sftp.download(self._sftp, remote_full, local_full)
-                elif action == quarantine_local_action:
-                    trash.quarantine_local(path, local_root)
-                elif action == quarantine_remote_action:
-                    remote_trash = str(PurePosixPath(remote_root).parent / ".sync_trash")
-                    sftp.remote_quarantine(self._ssh, remote_full, remote_trash)
-                elif action == "CONFLICT":
-                    reason = item.get("reason", "")
-                    if reason != "modified_vs_deleted":
-                        conflict_name = item["conflict_name"]
-                        local_conflict = local_full.parent / Path(conflict_name).name
-                        if local_full.exists():
-                            _shutil.copy2(str(local_full), str(local_conflict))
-                        sftp.download(
-                            self._sftp, remote_full,
-                            local_conflict.parent / f"_remote_{Path(conflict_name).name}"
-                        )
+                self.item_status.emit(path, "RUNNING")
+                try:
+                    if action == to_remote_action:
+                        sftp.upload(self._sftp, local_full, remote_full)
+                    elif action == to_local_action:
+                        sftp.download(self._sftp, remote_full, local_full)
+                    elif action == quarantine_local_action:
+                        trash.quarantine_local(path, local_root)
+                    elif action == quarantine_remote_action:
+                        remote_trash = str(PurePosixPath(remote_root).parent / ".sync_trash")
+                        sftp.remote_quarantine(self._ssh, remote_full, remote_trash)
+                    elif action == "CONFLICT":
+                        reason = item.get("reason", "")
+                        if reason != "modified_vs_deleted":
+                            conflict_name = item["conflict_name"]
+                            local_conflict = local_full.parent / Path(conflict_name).name
+                            if local_full.exists():
+                                _shutil.copy2(str(local_full), str(local_conflict))
+                            sftp.download(
+                                self._sftp, remote_full,
+                                local_conflict.parent / f"_remote_{Path(conflict_name).name}"
+                            )
+                    self.item_status.emit(path, "SUCCESS")
+                except Exception as op_err:
+                    self.item_status.emit(path, "FAILED")
+                    raise op_err
 
             # 优先保存 baseline（单独 try，避免被后续清理步骤异常连累而丢失历史记录）
             try:
@@ -771,11 +793,12 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("DuetFlow 双端文件同步")
-        self.resize(960, 680)
+        self.resize(1080, 720)
         self._cfg = None
         self._plan = None
         self._thread = None
         self._worker_obj = None
+        self._path_to_row = {}          # {rel_path: row_index} 高速索引映射表
 
         # 连接选项卡数据
         self._connections = []          # list[dict]: {host, port, user, key_path}
@@ -813,44 +836,49 @@ class MainWindow(QWidget):
         # ── 本机 + 远端路径信息 ──────────────────────────────────────────────
         self._build_path_info(root)
 
-        # ── Splitter: table left, log right ─────────────────────────────────
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(1)
+        # ── Splitter: 上部为全宽计划表格，下部为控制台日志 ─────────────────
+        splitter = QSplitter(Qt.Vertical)
+        splitter.setHandleWidth(4)
         root.addWidget(splitter, 1)
 
-        # Left: plan table
-        left = QWidget()
-        lv = QVBoxLayout(left)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.setSpacing(6)
+        # Top: plan table (占满宽度)
+        top_widget = QWidget()
+        tv = QVBoxLayout(top_widget)
+        tv.setContentsMargins(0, 0, 0, 0)
+        tv.setSpacing(6)
 
+        sec_header = QHBoxLayout()
         sec_label = QLabel("同步变更计划")
         sec_label.setObjectName("section")
-        lv.addWidget(sec_label)
+        sec_header.addWidget(sec_label)
+        sec_header.addStretch()
 
-        self._table = QTableWidget(0, 3)
-        self._table.setHorizontalHeaderLabels(["动作", "相对文件路径", "冲突 / 备注"])
+        self._summary_label = QLabel("暂无预览计划")
+        self._summary_label.setObjectName("subtitle")
+        sec_header.addWidget(self._summary_label)
+        tv.addLayout(sec_header)
+
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["动作", "相对文件路径", "状态", "冲突 / 备注"])
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self._table.verticalHeader().setVisible(False)
         self._table.setAlternatingRowColors(True)
         self._table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._table.setSelectionBehavior(QTableWidget.SelectRows)
-        lv.addWidget(self._table)
+        self._table.setWordWrap(True)
+        self._table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        tv.addWidget(self._table)
 
-        # Summary bar
-        self._summary_label = QLabel("暂无预览计划")
-        self._summary_label.setObjectName("subtitle")
-        lv.addWidget(self._summary_label)
+        splitter.addWidget(top_widget)
 
-        splitter.addWidget(left)
-
-        # Right: log
-        right = QWidget()
-        rv = QVBoxLayout(right)
-        rv.setContentsMargins(0, 0, 0, 0)
-        rv.setSpacing(6)
+        # Bottom: log (全宽日志区)
+        bottom_widget = QWidget()
+        bv = QVBoxLayout(bottom_widget)
+        bv.setContentsMargins(0, 0, 0, 0)
+        bv.setSpacing(6)
 
         log_header = QHBoxLayout()
         log_label = QLabel("运行控制台日志")
@@ -865,14 +893,14 @@ class MainWindow(QWidget):
         self._clear_log_btn.clicked.connect(lambda: self._log.clear())
         log_header.addWidget(self._clear_log_btn)
 
-        rv.addLayout(log_header)
+        bv.addLayout(log_header)
 
         self._log = QTextEdit()
         self._log.setReadOnly(True)
-        rv.addWidget(self._log)
+        bv.addWidget(self._log)
 
-        splitter.addWidget(right)
-        splitter.setSizes([600, 320])
+        splitter.addWidget(bottom_widget)
+        splitter.setSizes([450, 180])
 
         # ── Bottom Action Buttons ───────────────────────────────────────────
         btn_row = QHBoxLayout()
@@ -1535,7 +1563,11 @@ class MainWindow(QWidget):
 
     def _fill_table(self, plan):
         self._table.setRowCount(len(plan))
+        self._path_to_row = {}
         for row, item in enumerate(plan):
+            path = item["path"]
+            self._path_to_row[path] = row
+
             action = item["action"]
             label, color = ACTION_META.get(action, (action, TEXT_PRIMARY))
             remark = item.get("conflict_name", item.get("reason", ""))
@@ -1547,9 +1579,20 @@ class MainWindow(QWidget):
             item_font.setBold(True)
             action_item.setFont(item_font)
 
+            path_item = QTableWidgetItem(path)
+            path_item.setToolTip(path)
+
+            status_item = QTableWidgetItem("○")
+            status_item.setTextAlignment(Qt.AlignCenter)
+            status_item.setForeground(QColor(TEXT_SECONDARY))
+            s_font = QFont()
+            s_font.setPixelSize(14)
+            status_item.setFont(s_font)
+
             self._table.setItem(row, 0, action_item)
-            self._table.setItem(row, 1, QTableWidgetItem(item["path"]))
-            self._table.setItem(row, 2, QTableWidgetItem(remark or ""))
+            self._table.setItem(row, 1, path_item)
+            self._table.setItem(row, 2, status_item)
+            self._table.setItem(row, 3, QTableWidgetItem(remark or ""))
 
     # ── Execute ──────────────────────────────────────────────────────────────
 
@@ -1640,6 +1683,7 @@ class MainWindow(QWidget):
         thread.started.connect(worker.execute_plan)
         worker.log.connect(self._append_log)
         worker.progress.connect(self._on_progress_update)
+        worker.item_status.connect(self._on_item_status_update)
         worker.done.connect(lambda ok, msg, t=thread, w=worker: self._on_done(ok, msg, t, w))
         
         def _on_finished():
@@ -1657,6 +1701,32 @@ class MainWindow(QWidget):
             self._stop_btn.setEnabled(False)
             self._stop_btn.setText("正在取消...")
             self._worker_obj.stop()
+
+    def _on_item_status_update(self, path, status):
+        row = self._path_to_row.get(path)
+        if row is None or row >= self._table.rowCount():
+            return
+        item = self._table.item(row, 2)
+        if not item:
+            item = QTableWidgetItem()
+            item.setTextAlignment(Qt.AlignCenter)
+            self._table.setItem(row, 2, item)
+
+        font = QFont()
+        font.setPixelSize(15)
+        font.setBold(True)
+        item.setFont(font)
+
+        if status == "RUNNING":
+            item.setText("⋯")
+            item.setForeground(QColor(ACCENT_BLUE))
+            self._table.scrollToItem(item)
+        elif status == "SUCCESS":
+            item.setText("●")
+            item.setForeground(QColor(SUCCESS_GREEN))
+        elif status == "FAILED":
+            item.setText("✕")
+            item.setForeground(QColor(DANGER_RED))
 
     def _on_progress_update(self, current, total, msg):
         self._set_status(msg, ACCENT_BLUE)
