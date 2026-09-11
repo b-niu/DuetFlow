@@ -82,6 +82,35 @@ def save_baseline(win_manifest, mac_manifest, executed_plan=None):
     tmp.replace(BASELINE_PATH)
 
 
+def reset_baseline_with_local(local_manifest):
+    """在救援模式下，备份原 baseline 并以当前 Windows 本地清单为准全新重建 baseline。
+
+    返回备份文件路径（若原 baseline 存在）或 None。
+    """
+    backup_path = None
+    if BASELINE_PATH.exists():
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = BASELINE_PATH.with_name(f"baseline.rescue_backup_{ts}.json.gz")
+        shutil.copy2(str(BASELINE_PATH), str(backup_path))
+
+    merged = {}
+    for path, entry in (local_manifest or {}).items():
+        if not entry.get("status"):
+            merged[path] = entry
+
+    data = {
+        "version": "2.0",
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "files": merged,
+    }
+    tmp = BASELINE_PATH.with_suffix(".json.gz.tmp")
+    with gzip.open(tmp, "wt", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    tmp.replace(BASELINE_PATH)
+    return backup_path
+
+
+
 # ─── Rich 打印工具 ──────────────────────────────────────────────────────────
 
 ACTION_STYLE = {

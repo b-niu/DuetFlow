@@ -8,6 +8,7 @@ import socket
 import sys
 import time
 import traceback
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 
 from PySide6.QtCore import QObject, QThread, Qt, Signal
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QTabBar,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -183,6 +185,10 @@ QPushButton#browse_key:hover {{
     background-color: #f1f5f9;
 }}
 
+QTabWidget::pane {{
+    border: none;
+    background: transparent;
+}}
 QTabBar {{
     background: transparent;
 }}
@@ -191,7 +197,7 @@ QTabBar::tab {{
     color: {TEXT_SECONDARY};
     border: 1px solid {BORDER_COLOR};
     border-radius: 6px;
-    padding: 6px 10px 6px 14px;
+    padding: 6px 14px;
     margin-right: 6px;
     font-size: 13px;
     font-weight: 500;
@@ -206,6 +212,8 @@ QTabBar::tab:hover:!selected {{
     background-color: #f1f5f9;
     color: {TEXT_PRIMARY};
 }}
+
+
 
 QTableWidget {{
     background-color: {CARD_BG};
@@ -640,7 +648,224 @@ class SyncWorker(QObject):
                 self._ssh = None
 
 
+# ─── 救援模式后台工作线程 ───────────────────────────────────────────────────
+
+class RescueWorker(QObject):
+    """在 QThread 中执行 Windows 重整救援模式：
+    1. 扫描两端并调用 find_mac_only_new_files 找出 Mac 独有新增文件
+    2. 将用户勾选的文件从 Mac 下载到 Windows 本地
+    3. 备份原 baseline 并以 Windows 本地最新文件刷新 baseline
+    """
+
+    log = Signal(str)
+    progress = Signal(int, int, str)
+    found_files = Signal(list)          # list of dict: [{"path", "size", "mtime", "hash", ...}]
+    item_status = Signal(str, str)      # 单个文件执行状态 (path, 'RUNNING'|'SUCCESS'|'FAILED')
+    done = Signal(bool, str)            # (success, message)
+
+    def __init__(self, cfg, selected_files=None, win_manifest=None, mac_manifest=None):
+        super().__init__()
+        self.cfg = cfg
+        self.selected_files = selected_files or []
+        self._win_manifest = win_manifest
+        self._mac_manifest = mac_manifest
+        self._ssh = None
+        self._sftp = None
+        self._cancelled = False
+
+    def stop(self):
+        self._cancelled = True
+
+    def _is_cancelled(self):
+        return self._cancelled
+
+    def scan_and_find(self):
+        """阶段 1：扫描本地与 Mac 端，找出 Mac 端独有新文件"""
+        try:
+            cfg = self.cfg
+            r = cfg["_resolved"]
+            local_root = r["local_root"]
+            remote_root = r["remote_root"]
+            exclude = cfg.get("exclude", [])
+            text_ext = cfg.get("text_extensions", [])
+
+            from duetflow.cli import load_baseline
+            self.progress.emit(0, 0, "正在加载历史 baseline 快照...")
+            baseline = load_baseline() or {}
+            self.log.emit(f"已加载历史 baseline 快照（{len(baseline)} 条记录）")
+
+            # 1. 扫描本地
+            self.log.emit(f"开始扫描 Windows 本地: {local_root}")
+            self.progress.emit(0, 0, "正在扫描 Windows 本地目录...")
+
+            def scan_progress(count, path):
+                if count % 200 == 0 or count == 1:
+                    self.progress.emit(0, 0, f"正在扫描本地... 已发现 {count} 个文件")
+
+            local_mf = scanner.scan(
+                local_root, exclude, text_ext,
+                progress_callback=scan_progress,
+                cancel_check=self._is_cancelled,
+                prev_manifest=baseline,
+            )
+            if self._is_cancelled():
+                self.done.emit(False, "任务已被用户取消。")
+                return
+            self.log.emit(f"✓ 本地扫描完毕，共 {len(local_mf)} 个文件")
+
+            # 2. 连接 Mac
+            self.log.emit(f"正在连接 SSH 主机 {r['host']}:{r['port']} ...")
+            self.progress.emit(0, 0, "连接 SSH 主机...")
+            try:
+                self._ssh, self._sftp = sftp.connect(r)
+            except Exception as conn_err:
+                err_msg = str(conn_err)
+                hint = f"❌ 连接失败: {err_msg}"
+                self.log.emit(hint)
+                self.done.emit(False, hint)
+                return
+            self.log.emit("✓ SSH 连接成功")
+
+            if self._is_cancelled():
+                self.done.emit(False, "任务已被用户取消。")
+                return
+
+            # 3. 扫描 Mac 远端
+            self.log.emit(f"开始扫描 Mac 远端: {remote_root}")
+            self.progress.emit(0, 0, "正在扫描 Mac 远端目录...")
+            mac_app_dir = r.get("mac_app_dir", "")
+            remote_mf = sftp.remote_scan(
+                self._ssh, remote_root, exclude, text_ext,
+                prev_manifest=baseline,
+                mac_app_dir=mac_app_dir,
+            )
+            if self._is_cancelled():
+                self.done.emit(False, "任务已被用户取消。")
+                return
+            self.log.emit(f"✓ Mac 远端扫描完毕，共 {len(remote_mf)} 个文件")
+
+            # 区分 win 与 mac
+            if r["is_win"]:
+                win_mf, mac_mf = local_mf, remote_mf
+            else:
+                win_mf, mac_mf = remote_mf, local_mf
+
+            self._win_manifest = win_mf
+            self._mac_manifest = mac_mf
+
+            # 4. 分析查找 Mac 独有新增文件
+            self.log.emit("正在比对排查 Mac 端独有新增文件...")
+            mac_new_items = merge.find_mac_only_new_files(win_mf, mac_mf, baseline)
+            self.log.emit(f"比对完成：共检索到 {len(mac_new_items)} 个 Mac 端独有新增文件")
+
+            self.found_files.emit(mac_new_items)
+            self.done.emit(True, f"检索完成，找到 {len(mac_new_items)} 个 Mac 端独有新文件。")
+
+        except Exception:
+            self.done.emit(False, traceback.format_exc())
+        finally:
+            if self._sftp:
+                try:
+                    self._sftp.close()
+                except Exception:
+                    pass
+                self._sftp = None
+            if self._ssh:
+                try:
+                    self._ssh.close()
+                except Exception:
+                    pass
+                self._ssh = None
+
+    def pull_and_rebase(self):
+        """阶段 2：拉取用户选中的 Mac 新文件至 Windows，并备份重置 baseline"""
+        try:
+            cfg = self.cfg
+            r = cfg["_resolved"]
+            local_root = r["local_root"]
+            remote_root = r["remote_root"]
+            is_win = r["is_win"]
+            exclude = cfg.get("exclude", [])
+            text_ext = cfg.get("text_extensions", [])
+
+            to_pull = self.selected_files
+            total = len(to_pull)
+
+            if total > 0:
+                self.log.emit(f"正在建立 SSH/SFTP 连接准备拉取 {total} 个文件...")
+                self._ssh, self._sftp = sftp.connect(r)
+                self.log.emit("✓ 连接成功，开始从 Mac 下载文件...")
+
+                for idx, item in enumerate(to_pull):
+                    if self._is_cancelled():
+                        self.done.emit(False, "拉取已被用户取消。")
+                        return
+
+                    path = item["path"]
+                    step = idx + 1
+                    msg = f"({step}/{total}) 拉取: {path}"
+                    self.log.emit(f"[{step}/{total}] 下载: {path}")
+                    self.progress.emit(step, total, msg)
+                    self.item_status.emit(path, "RUNNING")
+
+                    if is_win:
+                        local_full = Path(local_root) / path
+                        remote_full = str(PurePosixPath(remote_root) / path)
+                    else:
+                        local_full = Path(remote_root) / path
+                        remote_full = str(PurePosixPath(local_root) / path)
+
+                    try:
+                        sftp.download(self._sftp, remote_full, local_full)
+                        self.item_status.emit(path, "SUCCESS")
+                    except Exception as e:
+                        self.item_status.emit(path, "FAILED")
+                        self.log.emit(f"❌ 下载文件失败 {path}: {e}")
+                        raise e
+
+            self.log.emit("✓ 选定文件拉取完成！")
+            self.progress.emit(total, total, "正在重新扫描 Windows 本地结构...")
+
+            # 重新全量扫描 Windows 本地目录，获取最新准确结构
+            self.log.emit(f"正在全量扫描本地最新状态: {local_root}")
+            latest_local_mf = scanner.scan(
+                local_root, exclude, text_ext,
+                cancel_check=self._is_cancelled,
+            )
+            if self._is_cancelled():
+                self.done.emit(False, "基线重置前被用户取消。")
+                return
+
+            self.log.emit(f"✓ 本地最新文件扫描完成（共 {len(latest_local_mf)} 个文件）")
+            self.log.emit("正在备份历史 baseline 并以 Windows 最新结构重建基线...")
+
+            from duetflow.cli import reset_baseline_with_local
+            backup_path = reset_baseline_with_local(latest_local_mf)
+            if backup_path:
+                self.log.emit(f"✓ 历史 baseline 已自动安全备份到: {backup_path.name}")
+            self.log.emit("✓ 全新 Baseline 基线重建完成！")
+
+            self.done.emit(True, "RESCUE_COMPLETE")
+
+        except Exception:
+            self.done.emit(False, traceback.format_exc())
+        finally:
+            if self._sftp:
+                try:
+                    self._sftp.close()
+                except Exception:
+                    pass
+                self._sftp = None
+            if self._ssh:
+                try:
+                    self._ssh.close()
+                except Exception:
+                    pass
+                self._ssh = None
+
+
 # ─── 删除与误删人工审核对话框 ───────────────────────────────────────────────
+
 
 class DeletionReviewDialog(QDialog):
     """删除与误删人工审核对话框。"""
@@ -800,6 +1025,10 @@ class MainWindow(QWidget):
         self._worker_obj = None
         self._path_to_row = {}          # {rel_path: row_index} 高速索引映射表
 
+        # 救援模式相关状态
+        self._rescue_found_files = []   # list of dict 从 Mac 检索到的独有新文件
+        self._rescue_path_to_row = {}   # 救援表格索引映射
+
         # 连接选项卡数据
         self._connections = []          # list[dict]: {host, port, user, key_path}
         self._current_idx = -1          # 当前选中的选项卡索引
@@ -836,10 +1065,33 @@ class MainWindow(QWidget):
         # ── 本机 + 远端路径信息 ──────────────────────────────────────────────
         self._build_path_info(root)
 
+        # ── 主功能分页导航 (QTabWidget) ──────────────────────────────────────
+        self._main_tabs = QTabWidget()
+        self._main_tabs.currentChanged.connect(self._on_main_tab_changed)
+        root.addWidget(self._main_tabs, 1)
+
+        # 标签页 1：⚡ 标准双向同步
+        tab_sync = QWidget()
+        tab_sync_layout = QVBoxLayout(tab_sync)
+        tab_sync_layout.setContentsMargins(0, 10, 0, 0)
+        tab_sync_layout.setSpacing(12)
+        self._build_sync_page(tab_sync_layout)
+        self._main_tabs.addTab(tab_sync, "⚡ 标准同步")
+
+        # 标签页 2：🛟 Win 重整救援
+        tab_rescue = QWidget()
+        tab_rescue_layout = QVBoxLayout(tab_rescue)
+        tab_rescue_layout.setContentsMargins(0, 10, 0, 0)
+        tab_rescue_layout.setSpacing(12)
+        self._build_rescue_page(tab_rescue_layout)
+        self._main_tabs.addTab(tab_rescue, "🛟 Win 重整救援")
+
+    def _build_sync_page(self, parent_layout):
+        """构建标准同步标签页内容：计划表格 + 日志控制台 + 底部按钮。"""
         # ── Splitter: 上部为全宽计划表格，下部为控制台日志 ─────────────────
         splitter = QSplitter(Qt.Vertical)
         splitter.setHandleWidth(4)
-        root.addWidget(splitter, 1)
+        parent_layout.addWidget(splitter, 1)
 
         # Top: plan table (占满宽度)
         top_widget = QWidget()
@@ -900,7 +1152,7 @@ class MainWindow(QWidget):
         bv.addWidget(self._log)
 
         splitter.addWidget(bottom_widget)
-        splitter.setSizes([450, 180])
+        splitter.setSizes([420, 160])
 
         # ── Bottom Action Buttons ───────────────────────────────────────────
         btn_row = QHBoxLayout()
@@ -932,7 +1184,159 @@ class MainWindow(QWidget):
         self._exec_btn.clicked.connect(self._start_execute)
         btn_row.addWidget(self._exec_btn)
 
-        root.addLayout(btn_row)
+        parent_layout.addLayout(btn_row)
+
+    def _build_rescue_page(self, parent_layout):
+        """构建 Win 重整救援模式界面。"""
+        # 顶部场景使用指引卡片
+        tip_frame = QFrame()
+        tip_frame.setObjectName("card")
+        tip_frame.setStyleSheet(
+            f"background-color: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 6px 12px;"
+        )
+        tip_layout = QVBoxLayout(tip_frame)
+        tip_layout.setContentsMargins(10, 8, 10, 8)
+        tip_layout.setSpacing(4)
+
+        tip_title = QLabel("💡 <b>功能使用指引与安全说明</b>")
+        tip_title.setStyleSheet("color: #92400e; font-size: 13px;")
+        tip_desc = QLabel(
+            "• <b>适用场景</b>：您在 Windows 端进行了大量重命名、归档或目录重构，导致常规同步触发误删熔断。<br>"
+            "• <b>步骤 1</b>：点击【检索 Mac 端独有新文件】分析出 Mac 端尚未同步过来的新增文档（来自历史基线之后产生的文件）。<br>"
+            "• <b>步骤 2</b>：核对列表并勾选确认后，点击【拉取勾选文件并重置基线】。程序将自动下载文件，并以当前 Windows 最新状态全新重建 Baseline 基线（原基线将自动安全备份）。<br>"
+            "• <b>步骤 3</b>：完成后切回【⚡ 标准同步】标签页，即可将全新的 Windows 目录结构无阻碍推送到 Mac 端。"
+        )
+        tip_desc.setStyleSheet("color: #78350f; font-size: 12px; line-height: 140%;")
+        tip_desc.setWordWrap(True)
+
+        tip_layout.addWidget(tip_title)
+        tip_layout.addWidget(tip_desc)
+        parent_layout.addWidget(tip_frame)
+
+        # 救援模式上下分割：上部为待拉取新文件表格，下部为救援日志
+        splitter = QSplitter(Qt.Vertical)
+        splitter.setHandleWidth(4)
+        parent_layout.addWidget(splitter, 1)
+
+        # Top: 发现的新文件表格
+        top_widget = QWidget()
+        tv = QVBoxLayout(top_widget)
+        tv.setContentsMargins(0, 0, 0, 0)
+        tv.setSpacing(6)
+
+        table_hdr = QHBoxLayout()
+        table_title = QLabel("Mac 端独有新文件清单")
+        table_title.setObjectName("section")
+        table_hdr.addWidget(table_title)
+        table_hdr.addStretch()
+
+        self._rescue_summary_lbl = QLabel("尚未进行扫描分析")
+        self._rescue_summary_lbl.setObjectName("subtitle")
+        table_hdr.addWidget(self._rescue_summary_lbl)
+        tv.addLayout(table_hdr)
+
+        self._rescue_table = QTableWidget(0, 5)
+        self._rescue_table.setHorizontalHeaderLabels(["选择", "相对路径", "文件大小", "Mac 修改时间", "拉取状态"])
+        self._rescue_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self._rescue_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self._rescue_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self._rescue_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self._rescue_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self._rescue_table.verticalHeader().setVisible(False)
+        self._rescue_table.setAlternatingRowColors(True)
+        self._rescue_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._rescue_table.setWordWrap(True)
+        self._rescue_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        tv.addWidget(self._rescue_table)
+
+        # 表格下方快捷勾选按钮行
+        select_row = QHBoxLayout()
+        self._rescue_select_all_btn = QPushButton("全选")
+        self._rescue_select_all_btn.setObjectName("flat")
+        self._rescue_select_all_btn.setFixedHeight(26)
+        self._rescue_select_all_btn.setStyleSheet("font-size: 12px; padding: 2px 10px;")
+        self._rescue_select_all_btn.clicked.connect(lambda: self._set_all_rescue_checkboxes(Qt.Checked))
+        select_row.addWidget(self._rescue_select_all_btn)
+
+        self._rescue_deselect_all_btn = QPushButton("取消全选")
+        self._rescue_deselect_all_btn.setObjectName("flat")
+        self._rescue_deselect_all_btn.setFixedHeight(26)
+        self._rescue_deselect_all_btn.setStyleSheet("font-size: 12px; padding: 2px 10px;")
+        self._rescue_deselect_all_btn.clicked.connect(lambda: self._set_all_rescue_checkboxes(Qt.Unchecked))
+        select_row.addWidget(self._rescue_deselect_all_btn)
+
+        select_row.addStretch()
+        tv.addLayout(select_row)
+
+        splitter.addWidget(top_widget)
+
+        # Bottom: 救援控制台日志
+        bottom_widget = QWidget()
+        bv = QVBoxLayout(bottom_widget)
+        bv.setContentsMargins(0, 0, 0, 0)
+        bv.setSpacing(6)
+
+        log_hdr = QHBoxLayout()
+        log_lbl = QLabel("救援控制台日志")
+        log_lbl.setObjectName("section")
+        log_hdr.addWidget(log_lbl)
+        log_hdr.addStretch()
+
+        self._rescue_clear_log_btn = QPushButton("清空")
+        self._rescue_clear_log_btn.setObjectName("flat")
+        self._rescue_clear_log_btn.setFixedHeight(24)
+        self._rescue_clear_log_btn.setStyleSheet("font-size: 11px; padding: 2px 8px;")
+        self._rescue_clear_log_btn.clicked.connect(lambda: self._rescue_log.clear())
+        log_hdr.addWidget(self._rescue_clear_log_btn)
+
+        bv.addLayout(log_hdr)
+
+        self._rescue_log = QTextEdit()
+        self._rescue_log.setReadOnly(True)
+        bv.addWidget(self._rescue_log)
+
+        splitter.addWidget(bottom_widget)
+        splitter.setSizes([340, 140])
+
+        # ── Bottom Action Buttons for Rescue ────────────────────────────────
+        rescue_btn_row = QHBoxLayout()
+        rescue_btn_row.setSpacing(10)
+
+        self._rescue_progress_bar = QProgressBar()
+        self._rescue_progress_bar.setFixedHeight(24)
+        self._rescue_progress_bar.setRange(0, 100)
+        self._rescue_progress_bar.setValue(0)
+        self._rescue_progress_bar.hide()
+        rescue_btn_row.addWidget(self._rescue_progress_bar, 1)
+
+        self._rescue_stop_btn = QPushButton("停止")
+        self._rescue_stop_btn.setObjectName("danger")
+        self._rescue_stop_btn.setFixedHeight(32)
+        self._rescue_stop_btn.hide()
+        self._rescue_stop_btn.clicked.connect(self._stop_rescue_task)
+        rescue_btn_row.addWidget(self._rescue_stop_btn)
+
+        self._rescue_scan_btn = QPushButton("1. 检索 Mac 端独有新文件")
+        self._rescue_scan_btn.setFixedHeight(32)
+        self._rescue_scan_btn.clicked.connect(self._start_rescue_scan)
+        rescue_btn_row.addWidget(self._rescue_scan_btn)
+
+        self._rescue_pull_btn = QPushButton("2. 拉取勾选文件并重置基线")
+        self._rescue_pull_btn.setObjectName("success")
+        self._rescue_pull_btn.setFixedHeight(32)
+        self._rescue_pull_btn.setEnabled(False)
+        self._rescue_pull_btn.clicked.connect(self._start_rescue_pull)
+        rescue_btn_row.addWidget(self._rescue_pull_btn)
+
+        parent_layout.addLayout(rescue_btn_row)
+
+    def _on_main_tab_changed(self, index):
+        """主标签页切换时的提示。"""
+        if index == 1:
+            self._set_status("已进入 Win 重整救援模式", WARNING_YELLOW)
+        else:
+            self._set_status("就绪", TEXT_SECONDARY)
+
 
     def _build_connection_bar(self, parent_layout):
         """构建选项卡栏：QTabBar + "+" 新增按钮。"""
@@ -1755,6 +2159,275 @@ class MainWindow(QWidget):
                 self._set_status("发生错误", DANGER_RED)
                 self._append_log(f"[错误提示]\n{msg}")
 
+    # ── 救援模式业务逻辑 (Rescue Mode) ──────────────────────────────────────────
+
+    def _append_rescue_log(self, text):
+        self._rescue_log.append(text)
+        self._rescue_log.verticalScrollBar().setValue(self._rescue_log.verticalScrollBar().maximum())
+
+    def _set_rescue_busy(self, busy):
+        self._rescue_scan_btn.setEnabled(not busy)
+        self._rescue_scan_btn.setText("正在分析检索中..." if busy else "1. 检索 Mac 端独有新文件")
+        if busy:
+            self._rescue_progress_bar.show()
+            self._rescue_progress_bar.setRange(0, 0)
+            self._rescue_stop_btn.show()
+            self._rescue_stop_btn.setEnabled(True)
+            self._rescue_stop_btn.setText("停止")
+            self._rescue_pull_btn.setEnabled(False)
+        else:
+            self._rescue_progress_bar.hide()
+            self._rescue_stop_btn.hide()
+
+    def _start_rescue_scan(self):
+        """阶段 1：扫描分析 Mac 端独有新文件"""
+        if not self._cfg:
+            return
+        self._update_resolved_from_fields()
+        r = self._cfg["_resolved"]
+
+        if not r.get("host"):
+            QMessageBox.warning(self, "提示", "请先填写远端主机 Host 地址（或选择一个已保存的连接）")
+            return
+        if not r.get("user"):
+            QMessageBox.warning(self, "提示", "请先填写远端 SSH 用户名")
+            return
+
+        if self._is_thread_running():
+            return
+
+        self._set_rescue_busy(True)
+        self._rescue_table.setRowCount(0)
+        self._rescue_found_files = []
+        self._rescue_pull_btn.setEnabled(False)
+        self._append_rescue_log("─" * 45)
+        self._append_rescue_log("开始比对扫描：排查 Mac 端独有新文件...")
+
+        worker = RescueWorker(self._cfg)
+        self._worker_obj = worker
+        thread = QThread()
+        self._thread = thread
+        worker.moveToThread(thread)
+
+        thread.started.connect(worker.scan_and_find)
+        worker.log.connect(self._append_rescue_log)
+        worker.progress.connect(self._on_rescue_progress_update)
+        worker.found_files.connect(self._on_rescue_found_files)
+        worker.done.connect(lambda ok, msg, t=thread, w=worker: self._on_rescue_scan_done(ok, msg, t, w))
+
+        def _on_finished():
+            if self._thread is thread:
+                self._thread = None
+
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(_on_finished)
+        thread.start()
+
+    def _on_rescue_progress_update(self, current, total, msg):
+        self._set_status(msg, ACCENT_BLUE)
+        if total == 0:
+            self._rescue_progress_bar.setRange(0, 0)
+        else:
+            self._rescue_progress_bar.setRange(0, total)
+            self._rescue_progress_bar.setValue(current)
+
+    def _on_rescue_found_files(self, files):
+        self._rescue_found_files = files
+        self._rescue_table.setRowCount(len(files))
+        self._rescue_path_to_row = {}
+
+        for row, item in enumerate(files):
+            path = item["path"]
+            self._rescue_path_to_row[path] = row
+
+            # Col 0: Checkbox
+            cb_item = QTableWidgetItem()
+            cb_item.setCheckState(Qt.Checked)
+            self._rescue_table.setItem(row, 0, cb_item)
+
+            # Col 1: Path
+            path_item = QTableWidgetItem(path)
+            path_item.setToolTip(path)
+            self._rescue_table.setItem(row, 1, path_item)
+
+            # Col 2: Size
+            sz = item.get("size", 0)
+            if sz < 1024:
+                sz_str = f"{sz} B"
+            elif sz < 1024 * 1024:
+                sz_str = f"{sz / 1024:.1f} KB"
+            else:
+                sz_str = f"{sz / (1024 * 1024):.1f} MB"
+            sz_item = QTableWidgetItem(sz_str)
+            sz_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self._rescue_table.setItem(row, 2, sz_item)
+
+            # Col 3: Mac mtime
+            mtime = item.get("mtime", 0)
+            time_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S") if mtime else "—"
+            mtime_item = QTableWidgetItem(time_str)
+            self._rescue_table.setItem(row, 3, mtime_item)
+
+            # Col 4: Status
+            status_item = QTableWidgetItem("待拉取")
+            status_item.setTextAlignment(Qt.AlignCenter)
+            status_item.setForeground(QColor(TEXT_SECONDARY))
+            self._rescue_table.setItem(row, 4, status_item)
+
+        if files:
+            self._rescue_summary_lbl.setText(f"发现 {len(files)} 个 Mac 端独有新文件，请核对并勾选")
+            self._rescue_pull_btn.setEnabled(True)
+            self._set_status(f"检索完毕：发现 {len(files)} 个待拉取新文件", WARNING_YELLOW)
+        else:
+            self._rescue_summary_lbl.setText("Mac 端未发现新增独有文件（双端新文件结构清晰）")
+            # 即使没有新文件需要拉取，用户也可能需要重置基线
+            self._rescue_pull_btn.setEnabled(True)
+            self._rescue_pull_btn.setText("2. 无新文件需拉取，直接重置基线")
+            self._set_status("Mac 端无独有新文件，可直接重置基线", SUCCESS_GREEN)
+
+    def _set_all_rescue_checkboxes(self, check_state):
+        for row in range(self._rescue_table.rowCount()):
+            item = self._rescue_table.item(row, 0)
+            if item:
+                item.setCheckState(check_state)
+
+    def _on_rescue_scan_done(self, ok, msg, thread, worker=None):
+        try:
+            if thread and thread.isRunning():
+                thread.quit()
+        except RuntimeError:
+            pass
+        self._set_rescue_busy(False)
+        if not ok:
+            if "取消" in msg:
+                self._set_status("救援检索已取消", WARNING_YELLOW)
+                self._append_rescue_log(msg)
+            else:
+                self._set_status("检索发生错误", DANGER_RED)
+                self._append_rescue_log(f"[错误提示]\n{msg}")
+
+    def _start_rescue_pull(self):
+        """阶段 2：拉取勾选的 Mac 新文件到本地 Windows，并备份重置 baseline"""
+        if self._is_thread_running():
+            return
+
+        # 收集用户勾选的文件
+        selected = []
+        for row in range(self._rescue_table.rowCount()):
+            cb_item = self._rescue_table.item(row, 0)
+            if cb_item and cb_item.checkState() == Qt.Checked:
+                if row < len(self._rescue_found_files):
+                    selected.append(self._rescue_found_files[row])
+
+        confirm_msg = (
+            f"确定要执行救援操作吗？\n\n"
+            f"1. 将从 Mac 下载 {len(selected)} 个独有新文件至 Windows 本地对应位置。\n"
+            f"2. 当前 baseline 基线快照将自动备份。\n"
+            f"3. 程序将以 Windows 本地最新结构全新重建 Baseline。\n\n"
+            f"完成后，您即可在【标准同步】标签页中将 Windows 重构后的新结构推送到 Mac 端。"
+        )
+        reply = QMessageBox.question(
+            self, "确认执行救援拉取与基线重置", confirm_msg,
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self._set_rescue_busy(True)
+        self._append_rescue_log("─" * 45)
+        self._append_rescue_log(f"开始执行救援：下载 {len(selected)} 个文件，并重置基线...")
+
+        worker = RescueWorker(self._cfg, selected_files=selected)
+        self._worker_obj = worker
+        thread = QThread()
+        self._thread = thread
+        worker.moveToThread(thread)
+
+        thread.started.connect(worker.pull_and_rebase)
+        worker.log.connect(self._append_rescue_log)
+        worker.progress.connect(self._on_rescue_progress_update)
+        worker.item_status.connect(self._on_rescue_item_status_update)
+        worker.done.connect(lambda ok, msg, t=thread, w=worker: self._on_rescue_pull_done(ok, msg, t, w))
+
+        def _on_finished():
+            if self._thread is thread:
+                self._thread = None
+
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(_on_finished)
+        thread.start()
+
+    def _on_rescue_item_status_update(self, path, status):
+        row = self._rescue_path_to_row.get(path)
+        if row is None or row >= self._rescue_table.rowCount():
+            return
+        item = self._rescue_table.item(row, 4)
+        if not item:
+            item = QTableWidgetItem()
+            self._rescue_table.setItem(row, 4, item)
+
+        font = QFont()
+        font.setPixelSize(13)
+        font.setBold(True)
+        item.setFont(font)
+
+        if status == "RUNNING":
+            item.setText("下载中...")
+            item.setForeground(QColor(ACCENT_BLUE))
+            self._rescue_table.scrollToItem(item)
+        elif status == "SUCCESS":
+            item.setText("✓ 已拉取")
+            item.setForeground(QColor(SUCCESS_GREEN))
+        elif status == "FAILED":
+            item.setText("✕ 失败")
+            item.setForeground(QColor(DANGER_RED))
+
+    def _on_rescue_pull_done(self, ok, msg, thread, worker=None):
+        try:
+            if thread and thread.isRunning():
+                thread.quit()
+        except RuntimeError:
+            pass
+        self._set_rescue_busy(False)
+
+        if ok and msg == "RESCUE_COMPLETE":
+            self._set_status("救援与基线重建全部完成！", SUCCESS_GREEN)
+            self._append_rescue_log("🎉 救援拉取成功，Baseline 已完全对齐 Windows 最新状态！")
+            self._rescue_pull_btn.setEnabled(False)
+            self._rescue_pull_btn.setText("2. 拉取勾选文件并重置基线 (已完成)")
+
+            # 引导弹窗提示切回标准同步
+            QMessageBox.information(
+                self,
+                "救援与基线重置成功",
+                "<b>救援操作已全部顺利完成！</b><br><br>"
+                "1. Mac 端的独有新文件已成功下载合并至 Windows 本地。<br>"
+                "2. 原基线快照已安全备份，全新 Baseline 已按当前 Windows 状态重建完毕。<br><br>"
+                "👉 <b>下一步</b>：<br>"
+                "请切换回【<b>⚡ 标准同步</b>】标签页，点击【扫描并预览变动】。"
+                "DuetFlow 将会把您在 Windows 端重构的全新目录结构安全、顺畅地推送到 Mac 端，"
+                "不会再受到旧路径的删除熔断干扰！"
+            )
+            # 自动帮用户切回标准同步页面
+            self._main_tabs.setCurrentIndex(0)
+        else:
+            if "取消" in msg:
+                self._set_status("救援任务已取消", WARNING_YELLOW)
+                self._append_rescue_log(msg)
+            else:
+                self._set_status("救援发生错误", DANGER_RED)
+                self._append_rescue_log(f"[错误提示]\n{msg}")
+                QMessageBox.critical(self, "救援执行错误", msg)
+
+    def _stop_rescue_task(self):
+        if self._worker_obj:
+            self._append_rescue_log("正在发送救援中途终止指令...")
+            self._rescue_stop_btn.setEnabled(False)
+            self._rescue_stop_btn.setText("正在取消...")
+            self._worker_obj.stop()
+
     # ── Helpers ──────────────────────────────────────────────────────────────
 
     def _append_log(self, text):
@@ -1789,6 +2462,7 @@ class MainWindow(QWidget):
             self._conn_thread.quit()
             self._conn_thread.wait(1000)
         event.accept()
+
 
 
 # ─── 入口 ─────────────────────────────────────────────────────────────────────

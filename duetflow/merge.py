@@ -127,3 +127,33 @@ def three_way_merge(win_manifest, mac_manifest, baseline):
             )
 
     return plan
+
+
+def find_mac_only_new_files(win_manifest, mac_manifest, baseline):
+    """在 Windows 大幅重整场景下，找出 Mac 端产生但尚未同步到 Windows 的独有新文件。
+
+    判别标准（Q3: A 选项）：
+    1. 在 mac_manifest 中存在，且未处于 SKIPPED 状态（非锁文件或非法字符）
+    2. 在 win_manifest 中不存在（Windows 本地没有该文件）
+    3. 在 baseline 中不存在（说明不是因为 Windows 重整/删除导致的旧文件，而是 Mac 端后来新增的文件）
+
+    返回 list of dict:
+        [{"path": rel_path, "size": size, "mtime": mtime, "hash": hash, "is_text": bool}, ...]
+    按路径字母升序排列。
+    """
+    win_manifest = win_manifest or {}
+    mac_manifest = mac_manifest or {}
+    baseline = baseline or {}
+
+    new_files = []
+    for path, entry in sorted(mac_manifest.items()):
+        if not entry or _is_skipped(entry):
+            continue
+        # 必须在 Mac 存在，Win 不存在，且 baseline 中不存在
+        if path not in win_manifest and path not in baseline:
+            item = dict(entry)
+            item["path"] = path
+            new_files.append(item)
+
+    return new_files
+

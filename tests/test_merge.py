@@ -67,3 +67,45 @@ def test_three_way_merge_cases():
     assert plan_dict["mac_del.txt"]["action"] == "QUARANTINE_WIN"
     assert plan_dict["mod_del.txt"]["action"] == "CONFLICT"
     assert plan_dict["mod_del.txt"]["reason"] == "modified_vs_deleted"
+
+
+def test_find_mac_only_new_files():
+    """测试在 Windows 大幅重整场景下，精准识别 Mac 端独有新增文件"""
+    baseline = {
+        "old_folder/file1.txt": {"hash": "h1"},
+        "old_folder/file2.txt": {"hash": "h2"},
+        "common.txt": {"hash": "h_comm"},
+    }
+
+    # Windows 端重整后：old_folder 整体被改名为 new_folder
+    # 并且删除了某个文件，新增了本地文件
+    win_manifest = {
+        "new_folder/file1.txt": {"hash": "h1"},
+        "new_folder/file2.txt": {"hash": "h2"},
+        "common.txt": {"hash": "h_comm"},
+        "win_local_new.txt": {"hash": "h_win_new"},
+    }
+
+    # Mac 端在 Win 重整期间：
+    # 1. 依然保留旧结构 old_folder/file1.txt (来自 baseline) -> 不应被算作 Mac 新文件
+    # 2. common.txt (来自 baseline) -> 不应被算作 Mac 新文件
+    # 3. 产生了一个全新的文档 mac_note.md (不在 baseline，也不在 Win) -> 应被识别为 Mac 独有新文件！
+    # 4. 产生了一个子目录文档 project/idea.docx (不在 baseline，也不在 Win) -> 应被识别为 Mac 独有新文件！
+    # 5. 一个锁定的临时文件 (status=SKIPPED_LOCKED) -> 应被跳过
+    mac_manifest = {
+        "old_folder/file1.txt": {"hash": "h1"},
+        "old_folder/file2.txt": {"hash": "h2"},
+        "common.txt": {"hash": "h_comm"},
+        "mac_note.md": {"size": 1024, "mtime": 1700000000, "hash": "h_mac_new"},
+        "project/idea.docx": {"size": 2048, "mtime": 1700000010, "hash": "h_idea"},
+        "locked_temp.tmp": {"status": "SKIPPED_LOCKED"},
+    }
+
+    found = merge.find_mac_only_new_files(win_manifest, mac_manifest, baseline)
+    found_paths = [f["path"] for f in found]
+
+    # 验证只有真正的 Mac 独有新文件被抓取出来
+    assert found_paths == ["mac_note.md", "project/idea.docx"]
+    assert found[0]["size"] == 1024
+    assert found[0]["hash"] == "h_mac_new"
+
